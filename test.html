@@ -6,8 +6,8 @@
     <title>Highways & Co. - Web Simulator</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        html, body { width: 100%; height: 100%; overflow: hidden; background: #14171a; font-family: 'Segoe UI', system-ui, sans-serif; }
-        #canvas { display: block; width: 100vw; height: 100vh; background: #47693e; cursor: crosshair; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #0e1216; font-family: 'Segoe UI', system-ui, sans-serif; }
+        #canvas { display: block; width: 100vw; height: 100vh; background: #0e1216; cursor: crosshair; }
         
         #top-bar {
             position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
@@ -39,14 +39,32 @@
         }
         .traffic-slider-wrap label { font-size: 11px; opacity: 0.8; }
         .traffic-slider-wrap input { width: 130px; cursor: pointer; }
+
+        #zoom-controls {
+            position: absolute; right: 20px; bottom: 20px;
+            background: rgba(20, 23, 26, 0.94); padding: 6px; border-radius: 14px;
+            display: flex; flex-direction: column; align-items: center; gap: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.1); z-index: 10;
+        }
+        .zoom-btn {
+            width: 36px; height: 36px; background: #252a2e; border: 1px solid #363d44;
+            color: #fff; border-radius: 9px; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; font-size: 14px;
+            font-weight: bold; transition: all 0.15s ease;
+        }
+        .zoom-btn:hover { background: #00a8ff; border-color: #0097e6; }
+        #zoom-level { font-size: 11px; font-weight: 700; color: #00a8ff; padding: 2px 0; }
     </style>
 </head>
 <body>
 
     <div id="top-bar">
         <div class="stat-item">Budget: <span id="budget-val" class="stat-val">$5,000</span></div>
+        <div class="stat-item">Road Upkeep: <span id="upkeep-val" style="color:#e67e22">-$0 / 10s</span></div>
         <div class="stat-item">Active Traffic: <span id="cars-val" style="color:#f1c40f">0</span></div>
-        <div class="stat-item">Towns/Jobs: <span id="hubs-val" style="color:#e74c3c">0</span></div>
+        <div class="stat-item">🏡 Towns: <span id="towns-val" style="color:#e74c3c">0</span></div>
+        <div class="stat-item">🏢 Jobs: <span id="jobs-val" style="color:#00a8ff">0</span></div>
         <div class="traffic-slider-wrap">
             <label>Traffic Demand Scale: <b id="rate-label" style="color:#00a8ff">5x</b></label>
             <input type="range" id="traffic-rate" min="1" max="25" value="5" step="1">
@@ -56,23 +74,31 @@
     <div id="toolbar">
         <button class="btn active" id="btn-local" onclick="setTool('local')">
             🏡 Local (2-Lane 2-Way)
-            <span class="cost">$40 / seg</span>
+            <span class="cost">$40 • Upkeep $1/10s</span>
         </button>
         <button class="btn" id="btn-avenue" onclick="setTool('avenue')">
             🛣️ Avenue (4-Lane 2-Way)
-            <span class="cost">$80 / seg</span>
+            <span class="cost">$100 • Upkeep $4/10s</span>
         </button>
         <button class="btn" id="btn-highway" onclick="setTool('highway')">
             🌉 Highway (6-Lane 2-Way)
-            <span class="cost">$150 / seg</span>
+            <span class="cost">$250 • Upkeep $10/10s</span>
         </button>
         <button class="btn" id="btn-signal" onclick="setTool('signal')">
             🚦 Traffic Light
-            <span class="cost">$150</span>
+            <span class="cost">$300 • Upkeep $5/10s</span>
         </button>
         <button class="btn" id="btn-roundabout" onclick="setTool('roundabout')">
             🔄 Roundabout
-            <span class="cost">$300</span>
+            <span class="cost">$600 • Upkeep $5/10s</span>
+        </button>
+        <button class="btn" id="btn-upgrade" onclick="setTool('upgrade')">
+            ⬆️ Upgrade Tier
+            <span class="cost">Local ➔ Ave ➔ Hwy</span>
+        </button>
+        <button class="btn" id="btn-downgrade" onclick="setTool('downgrade')">
+            ⬇️ Downgrade Tier
+            <span class="cost">Hwy ➔ Ave ➔ Local</span>
         </button>
         <button class="btn" id="btn-heatmap" onclick="toggleHeatmap()">
             🔥 Heatmap Mode
@@ -82,6 +108,13 @@
             🗑️ Demolish
             <span class="cost">+$20 refund</span>
         </button>
+    </div>
+
+    <div id="zoom-controls">
+        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">➕</button>
+        <div id="zoom-level">85%</div>
+        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">➖</button>
+        <button class="zoom-btn" onclick="resetZoom()" title="Reset / Fit View">🎯</button>
     </div>
 
     <canvas id="canvas"></canvas>
@@ -102,14 +135,24 @@
         let mousePos = { x: 0, y: 0 };
         let spawnMultiplier = 5;
         let nextHubTimer = 0;
+        let upkeepTimer = 0;
         let showHeatmap = false;
 
         const GRID = 40;
+        const WORLD_WIDTH = 2200;
+        const WORLD_HEIGHT = 1500;
+
+        let camera = { x: 1100, y: 750, zoom: 0.85, minZoom: 0.35, maxZoom: 2.5 };
+        let isPanning = false;
+        let panStartX = 0;
+        let panStartY = 0;
+        let camStartX = 0;
+        let camStartY = 0;
 
         const ROAD_TYPES = {
-            local: { lanes: 2, lanesPerDir: 1, width: 20, speedLimit: 2.2, cost: 40, color: '#34495e', line: '#f1c40f' },
-            avenue: { lanes: 4, lanesPerDir: 2, width: 34, speedLimit: 3.6, cost: 80, color: '#2c3e50', line: '#ffffff' },
-            highway: { lanes: 6, lanesPerDir: 3, width: 48, speedLimit: 5.5, cost: 150, color: '#1a252f', line: '#e67e22' }
+            local: { lanes: 2, lanesPerDir: 1, width: 20, speedLimit: 2.2, cost: 40, upkeep: 1, color: '#34495e', line: '#f1c40f' },
+            avenue: { lanes: 4, lanesPerDir: 2, width: 34, speedLimit: 3.6, cost: 100, upkeep: 4, color: '#2c3e50', line: '#ffffff' },
+            highway: { lanes: 6, lanesPerDir: 3, width: 48, speedLimit: 5.5, cost: 250, upkeep: 10, color: '#1a252f', line: '#e67e22' }
         };
 
         const JOB_COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#e74c3c', '#fd79a8', '#00cec9'];
@@ -119,28 +162,74 @@
             canvas.height = window.innerHeight || document.documentElement.clientHeight || 768;
         }
 
-        function snap(val) { return Math.round(val / GRID) * GRID; }
+        function screenToWorld(sx, sy) {
+            return {
+                x: (sx - canvas.width / 2) / camera.zoom + camera.x,
+                y: (sy - canvas.height / 2) / camera.zoom + camera.y
+            };
+        }
+
+        function worldToScreen(wx, wy) {
+            return {
+                x: (wx - camera.x) * camera.zoom + canvas.width / 2,
+                y: (wy - camera.y) * camera.zoom + canvas.height / 2
+            };
+        }
+
+        function setZoomAtScreenPoint(sx, sy, targetZoom) {
+            let clampedZoom = Math.max(camera.minZoom, Math.min(camera.maxZoom, targetZoom));
+            let mouseBefore = screenToWorld(sx, sy);
+            camera.zoom = clampedZoom;
+            let mouseAfter = screenToWorld(sx, sy);
+            camera.x += (mouseBefore.x - mouseAfter.x);
+            camera.y += (mouseBefore.y - mouseAfter.y);
+            updateUI();
+        }
+
+        function zoomIn() {
+            setZoomAtScreenPoint(canvas.width / 2, canvas.height / 2, camera.zoom * 1.25);
+        }
+
+        function zoomOut() {
+            setZoomAtScreenPoint(canvas.width / 2, canvas.height / 2, camera.zoom / 1.25);
+        }
+
+        function resetZoom() {
+            camera.x = WORLD_WIDTH / 2;
+            camera.y = WORLD_HEIGHT / 2;
+            camera.zoom = Math.max(0.45, Math.min(1.0, Math.min(canvas.width / (WORLD_WIDTH + 80), canvas.height / (WORLD_HEIGHT + 80))));
+            updateUI();
+        }
+
+        function snap(val, maxBound = Infinity) {
+            let snapped = Math.round(val / GRID) * GRID;
+            return Math.max(0, Math.min(maxBound, snapped));
+        }
 
         function addFloatingText(x, y, text, color) {
             floatingTexts.push({ x, y, text, color, opacity: 1.0, life: 60 });
         }
 
         function resolveNodeFromCoords(x, y) {
-            let nearbyHub = hubs.find(h => Math.hypot(h.x - x, h.y - y) <= 45);
+            let clX = Math.max(0, Math.min(WORLD_WIDTH, x));
+            let clY = Math.max(0, Math.min(WORLD_HEIGHT, y));
+            let nearbyHub = hubs.find(h => Math.hypot(h.x - clX, h.y - clY) <= 22);
             if (nearbyHub) {
                 return findOrCreateNode(nearbyHub.x, nearbyHub.y);
             }
-            return findOrCreateNode(snap(x), snap(y));
+            return findOrCreateNode(snap(clX, WORLD_WIDTH), snap(clY, WORLD_HEIGHT));
         }
 
         function findOrCreateNode(sx, sy) {
-            let n = nodes.find(n => n.x === sx && n.y === sy);
+            let clX = Math.max(0, Math.min(WORLD_WIDTH, sx));
+            let clY = Math.max(0, Math.min(WORLD_HEIGHT, sy));
+            let n = nodes.find(n => n.x === clX && n.y === clY);
             if (n) return n;
 
             let newNode = { 
                 id: nodes.length + 1, 
-                x: sx, 
-                y: sy, 
+                x: clX, 
+                y: clY, 
                 type: 'none',
                 signalState: 'NS_GREEN',
                 signalTimer: 0
@@ -149,18 +238,71 @@
             return newNode;
         }
 
+        function getStraightTargetNode(startNode, mouseX, mouseY) {
+            let dx = mouseX - startNode.x;
+            let dy = mouseY - startNode.y;
+
+            if (Math.abs(dx) >= Math.abs(dy)) {
+                // Strict Horizontal lock (target Y === startNode.y)
+                let targetX = snap(mouseX);
+                // Only snap to a hub if that hub is on the EXACT same horizontal row
+                let rowHub = hubs.find(h => h.y === startNode.y && Math.abs(h.x - mouseX) <= 22);
+                if (rowHub) targetX = rowHub.x;
+                return findOrCreateNode(targetX, startNode.y);
+            } else {
+                // Strict Vertical lock (target X === startNode.x)
+                let targetY = snap(mouseY);
+                // Only snap to a hub if that hub is on the EXACT same vertical column
+                let colHub = hubs.find(h => h.x === startNode.x && Math.abs(h.y - mouseY) <= 22);
+                if (colHub) targetY = colHub.y;
+                return findOrCreateNode(startNode.x, targetY);
+            }
+        }
+
+        function getHub(node) {
+            return hubs.find(h => h.x === node.x && h.y === node.y);
+        }
+
         function addEdgeSegment(nodeA, nodeB, roadType) {
             if (nodeA === nodeB) return false;
+            // Never add diagonal edge segments
+            if (nodeA.x !== nodeB.x && nodeA.y !== nodeB.y) return false;
+
             let existingIndex = edges.findIndex(e => (e.from === nodeA && e.to === nodeB) || (e.from === nodeB && e.to === nodeA));
             if (existingIndex !== -1) {
                 edges[existingIndex].type = roadType;
                 return false;
             }
+
+            // Enforce max 1 road connection per town and per workplace
+            let hubA = getHub(nodeA);
+            if (hubA) {
+                let connectedA = edges.filter(e => e.from === nodeA || e.to === nodeA);
+                if (connectedA.length >= 1) {
+                    let label = hubA.isSpawn ? 'Town Max 1 Road!' : 'Workplace Max 1 Road!';
+                    addFloatingText(nodeA.x, nodeA.y - 18, label, '#e74c3c');
+                    return false;
+                }
+            }
+
+            let hubB = getHub(nodeB);
+            if (hubB) {
+                let connectedB = edges.filter(e => e.from === nodeB || e.to === nodeB);
+                if (connectedB.length >= 1) {
+                    let label = hubB.isSpawn ? 'Town Max 1 Road!' : 'Workplace Max 1 Road!';
+                    addFloatingText(nodeB.x, nodeB.y - 18, label, '#e74c3c');
+                    return false;
+                }
+            }
+
             edges.push({ from: nodeA, to: nodeB, type: roadType, congestion: 0 });
             return true;
         }
 
         function buildRoadPath(startNode, endNode, roadType) {
+            // Absolute rejection of any diagonal path
+            if (startNode.x !== endNode.x && startNode.y !== endNode.y) return 0;
+
             let dx = endNode.x - startNode.x;
             let dy = endNode.y - startNode.y;
             let steps = Math.max(Math.abs(dx), Math.abs(dy)) / GRID;
@@ -180,16 +322,158 @@
 
                 if (addEdgeSegment(current, nextNode, roadType)) {
                     addedCount++;
+                    current = nextNode;
+                } else {
+                    let isUpgrade = edges.some(e => (e.from === current && e.to === nextNode) || (e.from === nextNode && e.to === current));
+                    if (isUpgrade) {
+                        current = nextNode;
+                    } else {
+                        break;
+                    }
                 }
-                current = nextNode;
             }
 
             updateNodeTypes();
             return addedCount;
         }
 
+        function demolishStraightPath(startNode, endNode) {
+            if (startNode.x !== endNode.x && startNode.y !== endNode.y) return 0;
+
+            let dx = endNode.x - startNode.x;
+            let dy = endNode.y - startNode.y;
+            let steps = Math.max(Math.abs(dx), Math.abs(dy)) / GRID;
+            if (steps === 0) return 0;
+            let stepX = dx / steps;
+            let stepY = dy / steps;
+
+            let deletedEdgesCount = 0;
+            let current = startNode;
+
+            for (let i = 1; i <= steps; i++) {
+                let nextX = Math.round(startNode.x + stepX * i);
+                let nextY = Math.round(startNode.y + stepY * i);
+                let nextNode = nodes.find(n => n.x === nextX && n.y === nextY);
+                if (nextNode) {
+                    let edgeIdx = edges.findIndex(e => (e.from === current && e.to === nextNode) || (e.from === nextNode && e.to === current));
+                    if (edgeIdx !== -1) {
+                        edges.splice(edgeIdx, 1);
+                        deletedEdgesCount++;
+                    }
+                    current = nextNode;
+                }
+            }
+
+            // Remove non-hub nodes that now have 0 connected edges
+            nodes = nodes.filter(n => {
+                let isHub = hubs.some(h => h.x === n.x && h.y === n.y);
+                if (isHub) return true;
+                return edges.some(e => e.from === n || e.to === n);
+            });
+
+            // Remove stranded cars on deleted edges
+            cars = cars.filter(c => {
+                let hasEdge = edges.some(e => (e.from === c.currentNode && e.to === c.nextNode) || (e.from === c.nextNode && e.to === c.currentNode));
+                return hasEdge || c.inRoundabout;
+            });
+
+            updateNodeTypes();
+            return deletedEdgesCount;
+        }
+
+        function upgradeStraightPath(startNode, endNode) {
+            if (startNode.x !== endNode.x && startNode.y !== endNode.y) return { count: 0, cost: 0 };
+
+            let dx = endNode.x - startNode.x;
+            let dy = endNode.y - startNode.y;
+            let steps = Math.max(Math.abs(dx), Math.abs(dy)) / GRID;
+            if (steps === 0) return { count: 0, cost: 0 };
+            let stepX = dx / steps;
+            let stepY = dy / steps;
+
+            let upgradedCount = 0;
+            let totalCost = 0;
+            let current = startNode;
+
+            for (let i = 1; i <= steps; i++) {
+                let nextX = Math.round(startNode.x + stepX * i);
+                let nextY = Math.round(startNode.y + stepY * i);
+                let nextNode = nodes.find(n => n.x === nextX && n.y === nextY);
+                if (nextNode) {
+                    let edge = edges.find(e => (e.from === current && e.to === nextNode) || (e.from === nextNode && e.to === current));
+                    if (edge) {
+                        if (edge.type === 'local') {
+                            edge.type = 'avenue';
+                            upgradedCount++;
+                            totalCost += (ROAD_TYPES.avenue.cost - ROAD_TYPES.local.cost);
+                        } else if (edge.type === 'avenue') {
+                            edge.type = 'highway';
+                            upgradedCount++;
+                            totalCost += (ROAD_TYPES.highway.cost - ROAD_TYPES.avenue.cost);
+                        }
+                    }
+                    current = nextNode;
+                }
+            }
+
+            updateNodeTypes();
+            return { count: upgradedCount, cost: totalCost };
+        }
+
+        function downgradeStraightPath(startNode, endNode) {
+            if (startNode.x !== endNode.x && startNode.y !== endNode.y) return { count: 0, refund: 0 };
+
+            let dx = endNode.x - startNode.x;
+            let dy = endNode.y - startNode.y;
+            let steps = Math.max(Math.abs(dx), Math.abs(dy)) / GRID;
+            if (steps === 0) return { count: 0, refund: 0 };
+            let stepX = dx / steps;
+            let stepY = dy / steps;
+
+            let downgradedCount = 0;
+            let totalRefund = 0;
+            let current = startNode;
+
+            for (let i = 1; i <= steps; i++) {
+                let nextX = Math.round(startNode.x + stepX * i);
+                let nextY = Math.round(startNode.y + stepY * i);
+                let nextNode = nodes.find(n => n.x === nextX && n.y === nextY);
+                if (nextNode) {
+                    let edge = edges.find(e => (e.from === current && e.to === nextNode) || (e.from === nextNode && e.to === current));
+                    if (edge) {
+                        if (edge.type === 'highway') {
+                            edge.type = 'avenue';
+                            downgradedCount++;
+                            totalRefund += (ROAD_TYPES.highway.cost - ROAD_TYPES.avenue.cost);
+                        } else if (edge.type === 'avenue') {
+                            edge.type = 'local';
+                            downgradedCount++;
+                            totalRefund += (ROAD_TYPES.avenue.cost - ROAD_TYPES.local.cost);
+                        }
+
+                        let maxLanes = ROAD_TYPES[edge.type].lanesPerDir;
+                        cars.forEach(c => {
+                            let onThisSeg = (c.currentNode === current && c.nextNode === nextNode) || (c.currentNode === nextNode && c.nextNode === current);
+                            if (onThisSeg && c.lane >= maxLanes) {
+                                c.lane = maxLanes - 1;
+                            }
+                        });
+                    }
+                    current = nextNode;
+                }
+            }
+
+            updateNodeTypes();
+            return { count: downgradedCount, refund: totalRefund };
+        }
+
         function updateNodeTypes() {
             nodes.forEach(n => {
+                let isHub = hubs.some(h => h.x === n.x && h.y === n.y);
+                if (isHub) {
+                    n.type = 'none';
+                    return;
+                }
                 if (n.type === 'signal' || n.type === 'roundabout') return;
                 let connectedEdges = edges.filter(e => e.from === n || e.to === n);
                 if (connectedEdges.length >= 3) {
@@ -248,7 +532,9 @@
         }
 
         function isValidHubLocation(hx, hy) {
-            let tooCloseToHub = hubs.some(h => Math.hypot(h.x - hx, h.y - hy) < 90);
+            if (hx < 120 || hx > WORLD_WIDTH - 120 || hy < 120 || hy > WORLD_HEIGHT - 120) return false;
+
+            let tooCloseToHub = hubs.some(h => Math.hypot(h.x - hx, h.y - hy) < 100);
             if (tooCloseToHub) return false;
 
             let tooCloseToRoad = nodes.some(n => Math.hypot(n.x - hx, n.y - hy) <= GRID + 5);
@@ -273,27 +559,32 @@
 
         function createHub(x, y, isSpawn, gracePeriod = 20) {
             let colorIdx = hubs.filter(h => !h.isSpawn).length % JOB_COLORS.length;
-            let hubX = snap(x);
-            let hubY = snap(y);
+            let hubX = snap(x, WORLD_WIDTH);
+            let hubY = snap(y, WORLD_HEIGHT);
 
             if (!isValidHubLocation(hubX, hubY)) return false;
 
             let hubNode = findOrCreateNode(hubX, hubY);
 
+            let townCount = hubs.filter(h => h.isSpawn).length;
+            let jobCount = hubs.filter(h => !h.isSpawn).length;
+            let hubNumber = isSpawn ? (townCount + 1) : (jobCount + 1);
+
             let newHub = {
                 id: hubs.length + 1,
+                hubNumber: hubNumber,
                 x: hubX,
                 y: hubY,
                 isSpawn: isSpawn,
                 color: isSpawn ? '#e74c3c' : JOB_COLORS[colorIdx],
-                name: isSpawn ? `Town #${hubs.filter(h=>h.isSpawn).length+1}` : `Job #${hubs.filter(h=>!h.isSpawn).length+1}`,
+                name: isSpawn ? `Town #${hubNumber}` : `Job #${hubNumber}`,
                 timer: gracePeriod
             };
 
             hubs.push(newHub);
 
             updateNodeTypes();
-            document.getElementById('hubs-val').innerText = hubs.length;
+            updateUI();
             return true;
         }
 
@@ -306,13 +597,14 @@
             floatingTexts = [];
             missingPathLines = [];
 
-            let w = canvas.width;
-            let h = canvas.height;
+            camera.x = WORLD_WIDTH / 2;
+            camera.y = WORLD_HEIGHT / 2;
+            camera.zoom = Math.max(0.45, Math.min(1.0, Math.min(canvas.width / (WORLD_WIDTH + 80), canvas.height / (WORLD_HEIGHT + 80))));
 
-            createHub(200, Math.max(120, h / 2 - 140), true, 20);
-            createHub(200, Math.min(h - 120, h / 2 + 140), true, 20);
-            createHub(w - 200, Math.max(120, h / 2 - 140), false, 20);
-            createHub(w - 200, Math.min(h - 120, h / 2 + 140), false, 20);
+            createHub(360, Math.max(200, WORLD_HEIGHT / 2 - 200), true, 20);
+            createHub(360, Math.min(WORLD_HEIGHT - 200, WORLD_HEIGHT / 2 + 200), true, 20);
+            createHub(WORLD_WIDTH - 360, Math.max(200, WORLD_HEIGHT / 2 - 200), false, 20);
+            createHub(WORLD_WIDTH - 360, Math.min(WORLD_HEIGHT - 200, WORLD_HEIGHT / 2 + 200), false, 20);
 
             updateUI();
         }
@@ -325,12 +617,44 @@
             nodes.forEach(n => {
                 if (n.type === 'signal') {
                     n.signalTimer++;
-                    if (n.signalTimer >= 4) {
+
+                    let connectedEdges = edges.filter(e => e.from === n || e.to === n);
+                    let nsEdges = connectedEdges.filter(e => {
+                        let other = (e.from === n ? e.to : e.from);
+                        return Math.abs(other.y - n.y) >= Math.abs(other.x - n.x);
+                    });
+                    let ewEdges = connectedEdges.filter(e => {
+                        let other = (e.from === n ? e.to : e.from);
+                        return Math.abs(other.x - n.x) > Math.abs(other.y - n.y);
+                    });
+
+                    let nsMaxLanes = nsEdges.reduce((max, e) => Math.max(max, ROAD_TYPES[e.type]?.lanesPerDir || 1), 1);
+                    let ewMaxLanes = ewEdges.reduce((max, e) => Math.max(max, ROAD_TYPES[e.type]?.lanesPerDir || 1), 1);
+
+                    // Dynamic green phase duration based on road hierarchy: Local = 3s, Avenue = 6s, Highway = 9s
+                    let nsDuration = nsMaxLanes === 3 ? 9 : (nsMaxLanes === 2 ? 6 : 3);
+                    let ewDuration = ewMaxLanes === 3 ? 9 : (ewMaxLanes === 2 ? 6 : 3);
+
+                    let currentLimit = (n.signalState === 'NS_GREEN') ? nsDuration : ewDuration;
+                    if (n.signalTimer >= currentLimit) {
                         n.signalState = (n.signalState === 'NS_GREEN') ? 'EW_GREEN' : 'NS_GREEN';
                         n.signalTimer = 0;
                     }
                 }
             });
+
+            // Road & Intersection network maintenance upkeep tick (every 10s)
+            upkeepTimer++;
+            if (upkeepTimer >= 10) {
+                upkeepTimer = 0;
+                let roadUpkeep = edges.reduce((sum, e) => sum + (ROAD_TYPES[e.type]?.upkeep || 0), 0);
+                let intersectionUpkeep = nodes.filter(n => n.type === 'signal' || n.type === 'roundabout').length * 5;
+                let totalUpkeep = roadUpkeep + intersectionUpkeep;
+                if (totalUpkeep > 0) {
+                    budget -= totalUpkeep;
+                    updateUI();
+                }
+            }
         }, 1000);
 
         function setTool(tool) {
@@ -353,62 +677,207 @@
             document.getElementById('rate-label').innerText = `${spawnMultiplier}x`;
         });
 
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            let rect = canvas.getBoundingClientRect();
+            let sx = e.clientX - rect.left;
+            let sy = e.clientY - rect.top;
+            let zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+            setZoomAtScreenPoint(sx, sy, camera.zoom * zoomFactor);
+        }, { passive: false });
+
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
         canvas.addEventListener('mousemove', (e) => {
             let rect = canvas.getBoundingClientRect();
-            mousePos.x = e.clientX - rect.left;
-            mousePos.y = e.clientY - rect.top;
+            let sx = e.clientX - rect.left;
+            let sy = e.clientY - rect.top;
+
+            if (isPanning) {
+                let dx = (sx - panStartX) / camera.zoom;
+                let dy = (sy - panStartY) / camera.zoom;
+                camera.x = camStartX - dx;
+                camera.y = camStartY - dy;
+                return;
+            }
+
+            let world = screenToWorld(sx, sy);
+            mousePos.x = world.x;
+            mousePos.y = world.y;
         });
 
         canvas.addEventListener('mousedown', (e) => {
             let rect = canvas.getBoundingClientRect();
-            let clickX = e.clientX - rect.left;
-            let clickY = e.clientY - rect.top;
+            let sx = e.clientX - rect.left;
+            let sy = e.clientY - rect.top;
 
-            if (currentTool in ROAD_TYPES) {
+            if (e.button === 2 || e.button === 1 || e.shiftKey) {
+                isPanning = true;
+                panStartX = sx;
+                panStartY = sy;
+                camStartX = camera.x;
+                camStartY = camera.y;
+                return;
+            }
+
+            let world = screenToWorld(sx, sy);
+            let clickX = world.x;
+            let clickY = world.y;
+
+            if (currentTool in ROAD_TYPES || currentTool === 'delete' || currentTool === 'upgrade' || currentTool === 'downgrade') {
                 dragStartNode = resolveNodeFromCoords(clickX, clickY);
             } else if (currentTool === 'signal') {
                 let target = nodes.find(n => Math.hypot(n.x - clickX, n.y - clickY) < 25);
                 if (target) {
-                    target.type = 'signal';
-                    budget -= 150;
-                    addFloatingText(target.x, target.y - 15, '-$150', '#e74c3c');
-                    updateUI();
+                    let isHub = hubs.some(h => h.x === target.x && h.y === target.y);
+                    if (isHub) {
+                        addFloatingText(target.x, target.y - 15, 'Cannot build on Buildings!', '#e74c3c');
+                    } else if (target.type !== 'signal') {
+                        target.type = 'signal';
+                        budget -= 300;
+                        addFloatingText(target.x, target.y - 15, '-$300', '#e74c3c');
+                        updateUI();
+                    }
                 }
             } else if (currentTool === 'roundabout') {
                 let target = nodes.find(n => Math.hypot(n.x - clickX, n.y - clickY) < 25);
                 if (target) {
-                    target.type = 'roundabout';
-                    budget -= 300;
-                    addFloatingText(target.x, target.y - 15, '-$300', '#e74c3c');
-                    updateUI();
-                }
-            } else if (currentTool === 'delete') {
-                let targetNode = nodes.find(n => Math.hypot(n.x - clickX, n.y - clickY) < 25);
-                if (targetNode) {
-                    nodes = nodes.filter(n => n !== targetNode);
-                    edges = edges.filter(e => e.from !== targetNode && e.to !== targetNode);
-                    cars = cars.filter(c => c.currentNode !== targetNode && c.nextNode !== targetNode);
-                    updateNodeTypes();
-                    budget += 20;
-                    addFloatingText(targetNode.x, targetNode.y - 15, '+$20', '#2ecc71');
-                    updateUI();
+                    let isHub = hubs.some(h => h.x === target.x && h.y === target.y);
+                    if (isHub) {
+                        addFloatingText(target.x, target.y - 15, 'Cannot build on Buildings!', '#e74c3c');
+                    } else if (target.type !== 'roundabout') {
+                        target.type = 'roundabout';
+                        budget -= 600;
+                        addFloatingText(target.x, target.y - 15, '-$600', '#e74c3c');
+                        updateUI();
+                    }
                 }
             }
         });
 
         canvas.addEventListener('mouseup', (e) => {
-            if (dragStartNode && currentTool in ROAD_TYPES) {
-                let rect = canvas.getBoundingClientRect();
-                let endNode = resolveNodeFromCoords(e.clientX - rect.left, e.clientY - rect.top);
+            if (isPanning) {
+                isPanning = false;
+                return;
+            }
 
-                if (dragStartNode !== endNode) {
-                    let cost = ROAD_TYPES[currentTool].cost;
-                    let addedSegments = buildRoadPath(dragStartNode, endNode, currentTool);
-                    if (addedSegments > 0) {
-                        let totalCost = cost * addedSegments;
-                        budget -= totalCost;
-                        addFloatingText((dragStartNode.x + endNode.x) / 2, (dragStartNode.y + endNode.y) / 2, `-$${totalCost}`, '#e74c3c');
-                        updateUI();
+            if (dragStartNode) {
+                let rect = canvas.getBoundingClientRect();
+                let sx = e.clientX - rect.left;
+                let sy = e.clientY - rect.top;
+                let world = screenToWorld(sx, sy);
+                let endNode = getStraightTargetNode(dragStartNode, world.x, world.y);
+
+                if (currentTool in ROAD_TYPES) {
+                    if (dragStartNode !== endNode) {
+                        let cost = ROAD_TYPES[currentTool].cost;
+                        let addedSegments = buildRoadPath(dragStartNode, endNode, currentTool);
+                        if (addedSegments > 0) {
+                            let totalCost = cost * addedSegments;
+                            budget -= totalCost;
+                            addFloatingText((dragStartNode.x + endNode.x) / 2, (dragStartNode.y + endNode.y) / 2, `-$${totalCost}`, '#e74c3c');
+                            updateUI();
+                        }
+                    }
+                } else if (currentTool === 'delete') {
+                    if (dragStartNode !== endNode) {
+                        let deletedCount = demolishStraightPath(dragStartNode, endNode);
+                        if (deletedCount > 0) {
+                            let refund = 20 * deletedCount;
+                            budget += refund;
+                            addFloatingText((dragStartNode.x + endNode.x) / 2, (dragStartNode.y + endNode.y) / 2, `+$${refund} Refund`, '#2ecc71');
+                            updateUI();
+                        }
+                    } else {
+                        // Single-click delete
+                        let targetNode = nodes.find(n => Math.hypot(n.x - world.x, n.y - world.y) < 25);
+                        if (targetNode) {
+                            let isHub = hubs.some(h => h.x === targetNode.x && h.y === targetNode.y);
+                            if (!isHub) {
+                                nodes = nodes.filter(n => n !== targetNode);
+                            }
+                            edges = edges.filter(e => e.from !== targetNode && e.to !== targetNode);
+                            cars = cars.filter(c => c.currentNode !== targetNode && c.nextNode !== targetNode);
+                            updateNodeTypes();
+                            budget += 20;
+                            addFloatingText(targetNode.x, targetNode.y - 15, '+$20', '#2ecc71');
+                            updateUI();
+                        }
+                    }
+                } else if (currentTool === 'upgrade') {
+                    if (dragStartNode !== endNode) {
+                        let result = upgradeStraightPath(dragStartNode, endNode);
+                        if (result.count > 0) {
+                            budget -= result.cost;
+                            addFloatingText((dragStartNode.x + endNode.x) / 2, (dragStartNode.y + endNode.y) / 2, `-$${result.cost} Upgraded!`, '#00cec9');
+                            updateUI();
+                        }
+                    } else {
+                        // Single-click upgrade
+                        let targetNode = nodes.find(n => Math.hypot(n.x - world.x, n.y - world.y) < 25);
+                        if (targetNode) {
+                            let connected = edges.filter(e => e.from === targetNode || e.to === targetNode);
+                            let upgraded = 0;
+                            let cost = 0;
+                            connected.forEach(edge => {
+                                if (edge.type === 'local') {
+                                    edge.type = 'avenue';
+                                    upgraded++;
+                                    cost += (ROAD_TYPES.avenue.cost - ROAD_TYPES.local.cost);
+                                } else if (edge.type === 'avenue') {
+                                    edge.type = 'highway';
+                                    upgraded++;
+                                    cost += (ROAD_TYPES.highway.cost - ROAD_TYPES.avenue.cost);
+                                }
+                            });
+                            if (upgraded > 0) {
+                                budget -= cost;
+                                addFloatingText(targetNode.x, targetNode.y - 18, `-$${cost} Upgraded!`, '#00cec9');
+                                updateNodeTypes();
+                                updateUI();
+                            }
+                        }
+                    }
+                } else if (currentTool === 'downgrade') {
+                    if (dragStartNode !== endNode) {
+                        let result = downgradeStraightPath(dragStartNode, endNode);
+                        if (result.count > 0) {
+                            budget += result.refund;
+                            addFloatingText((dragStartNode.x + endNode.x) / 2, (dragStartNode.y + endNode.y) / 2, `+$${result.refund} Downgraded!`, '#f39c12');
+                            updateUI();
+                        }
+                    } else {
+                        // Single-click downgrade
+                        let targetNode = nodes.find(n => Math.hypot(n.x - world.x, n.y - world.y) < 25);
+                        if (targetNode) {
+                            let connected = edges.filter(e => e.from === targetNode || e.to === targetNode);
+                            let downgraded = 0;
+                            let refund = 0;
+                            connected.forEach(edge => {
+                                if (edge.type === 'highway') {
+                                    edge.type = 'avenue';
+                                    downgraded++;
+                                    refund += (ROAD_TYPES.highway.cost - ROAD_TYPES.avenue.cost);
+                                } else if (edge.type === 'avenue') {
+                                    edge.type = 'local';
+                                    downgraded++;
+                                    refund += (ROAD_TYPES.avenue.cost - ROAD_TYPES.local.cost);
+                                }
+                                let maxLanes = ROAD_TYPES[edge.type].lanesPerDir;
+                                cars.forEach(c => {
+                                    let onThisSeg = (c.currentNode === edge.from && c.nextNode === edge.to) || (c.currentNode === edge.to && c.nextNode === edge.from);
+                                    if (onThisSeg && c.lane >= maxLanes) {
+                                        c.lane = maxLanes - 1;
+                                    }
+                                });
+                            });
+                            if (downgraded > 0) {
+                                budget += refund;
+                                addFloatingText(targetNode.x, targetNode.y - 18, `+$${refund} Downgraded!`, '#f39c12');
+                                updateNodeTypes();
+                                updateUI();
+                            }
+                        }
                     }
                 }
             }
@@ -420,17 +889,32 @@
             budgetEl.innerText = `${budget < 0 ? '-' : ''}$${Math.abs(budget).toLocaleString()}`;
             budgetEl.style.color = budget < 0 ? '#e74c3c' : '#2ecc71';
             document.getElementById('cars-val').innerText = cars.length;
-            document.getElementById('hubs-val').innerText = hubs.length;
+
+            let townCount = hubs.filter(h => h.isSpawn).length;
+            let jobCount = hubs.filter(h => !h.isSpawn).length;
+            let townsEl = document.getElementById('towns-val');
+            let jobsEl = document.getElementById('jobs-val');
+            if (townsEl) townsEl.innerText = townCount;
+            if (jobsEl) jobsEl.innerText = jobCount;
+
+            let roadUpkeep = edges.reduce((sum, e) => sum + (ROAD_TYPES[e.type]?.upkeep || 0), 0);
+            let intersectionUpkeep = nodes.filter(n => n.type === 'signal' || n.type === 'roundabout').length * 5;
+            let totalUpkeep = roadUpkeep + intersectionUpkeep;
+            let upkeepEl = document.getElementById('upkeep-val');
+            if (upkeepEl) upkeepEl.innerText = `-$${totalUpkeep} / 10s`;
+
+            let zoomLevelEl = document.getElementById('zoom-level');
+            if (zoomLevelEl) zoomLevelEl.innerText = `${Math.round(camera.zoom * 100)}%`;
         }
 
         setInterval(() => {
             nextHubTimer++;
             if (nextHubTimer >= 15) {
                 nextHubTimer = 0;
-                let margin = 120;
+                let margin = 160;
                 for (let attempt = 0; attempt < 10; attempt++) {
-                    let rx = snap(margin + Math.random() * (canvas.width - margin * 2));
-                    let ry = snap(margin + Math.random() * (canvas.height - margin * 2));
+                    let rx = snap(margin + Math.random() * (WORLD_WIDTH - margin * 2), WORLD_WIDTH);
+                    let ry = snap(margin + Math.random() * (WORLD_HEIGHT - margin * 2), WORLD_HEIGHT);
                     if (createHub(rx, ry, Math.random() > 0.4, 20)) break;
                 }
             }
@@ -469,6 +953,7 @@
                         });
 
                         if (!isBlocked) {
+                            startTown.blockedCycles = 0;
                             cars.push({
                                 x: startX,
                                 y: startY,
@@ -483,19 +968,28 @@
                                 angle: Math.atan2(dy0, dx0),
                                 stopTimer: 0,
                                 stoppedAtStopSign: false,
+                                crossingIntersection: false,
                                 inRoundabout: false,
                                 roundaboutLane: 0,
                                 roundaboutAngle: null
                             });
                         } else {
-                            // Car cannot get out of town due to traffic jam at the exit
-                            budget -= 10;
-                            addFloatingText(startTown.x, startTown.y - 18, '-$10 Jam Penalty', '#e74c3c');
+                            startTown.jamFlash = 50;
+                            startTown.blockedCycles = (startTown.blockedCycles || 0) + 1;
+                            if (startTown.blockedCycles >= 2 && startTown.blockedCycles % 2 === 0) {
+                                budget -= 50;
+                                addFloatingText(startTown.x, startTown.y - 20, '-$50 EXIT JAMMED!', '#ff4757');
+                                updateUI();
+                            }
                         }
                     } else {
-                        // Car cannot get out of town due to no road connection to job center
-                        budget -= 10;
-                        addFloatingText(startTown.x, startTown.y - 18, '-$10 Jam Penalty', '#e74c3c');
+                        // Unconnected town penalty
+                        startTown.unconnectedCycles = (startTown.unconnectedCycles || 0) + 1;
+                        if (startTown.unconnectedCycles >= 4 && startTown.unconnectedCycles % 4 === 0) {
+                            budget -= 50;
+                            addFloatingText(startTown.x, startTown.y - 20, '-$50 NO ROAD!', '#ff4757');
+                            updateUI();
+                        }
                         missingPathLines.push({
                             x1: startTown.x, y1: startTown.y,
                             x2: targetJob.x, y2: targetJob.y,
@@ -553,6 +1047,7 @@
 
         function update() {
             edges.forEach(e => { e.congestion = Math.max(0, e.congestion - 0.03); });
+            hubs.forEach(h => { if (h.jamFlash > 0) h.jamFlash--; });
 
             for (let i = floatingTexts.length - 1; i >= 0; i--) {
                 let ft = floatingTexts[i];
@@ -579,66 +1074,131 @@
                     edge.congestion = Math.min(100, edge.congestion + 0.4);
                 }
 
-                if (car.currentNode.type === 'roundabout' || car.nextNode.type === 'roundabout') {
-                    let rNode = car.currentNode.type === 'roundabout' ? car.currentNode : car.nextNode;
+                if (car.inRoundabout) {
+                    let rNode = car.roundaboutCenter;
                     let specs = getRoundaboutSpecs(rNode);
-                    let distToCenter = Math.hypot(car.x - rNode.x, car.y - rNode.y);
+                    let laneRadius = specs.radius + 3 - (car.roundaboutLane * 7);
+                    let maxCircleSpeed = 1.4;
+                    let destNode = car.roundaboutExitNode || car.nextNode;
 
-                    if (distToCenter <= specs.radius + 16) {
-                        car.inRoundabout = true;
-                        if (car.roundaboutAngle === null) {
-                            car.roundaboutAngle = Math.atan2(car.y - rNode.y, car.x - rNode.x);
-                            car.roundaboutLane = car.lane % specs.lanes;
-                        }
+                    let brakeInRoundabout = false;
+                    let targetFollowSpeed = maxCircleSpeed;
 
-                        let laneRadius = specs.radius - (car.roundaboutLane * 7);
+                    for (let j = 0; j < cars.length; j++) {
+                        if (i === j) continue;
+                        let other = cars[j];
 
-                        let brakeInRoundabout = false;
-                        for (let j = 0; j < cars.length; j++) {
-                            if (i === j) continue;
-                            let other = cars[j];
-                            if (other.inRoundabout && other.roundaboutLane === car.roundaboutLane) {
-                                let angleDiff = ((car.roundaboutAngle - other.roundaboutAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-                                let dist = Math.hypot(other.x - car.x, other.y - car.y);
-                                if (angleDiff > 0.02 && angleDiff < 0.8) {
-                                    brakeInRoundabout = true;
-                                    if (dist < 22) {
-                                        car.speed = 0;
-                                        break;
-                                    } else {
-                                        car.speed = Math.max(0, Math.min(car.speed - 0.1, other.speed));
-                                    }
+                        // Check A: Other car is in the same roundabout and same lane ahead
+                        if (other.inRoundabout && other.roundaboutCenter === rNode && other.roundaboutLane === car.roundaboutLane) {
+                            let angleDiff = ((car.roundaboutAngle - other.roundaboutAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+                            let dist = Math.hypot(other.x - car.x, other.y - car.y);
+
+                            if (angleDiff > 0.01 && angleDiff < 0.85) {
+                                brakeInRoundabout = true;
+                                if (dist < 16) {
+                                    targetFollowSpeed = Math.min(targetFollowSpeed, 0);
+                                } else {
+                                    let safeTargetSpeed = Math.max(0.3, ((dist - 14) / 22) * maxCircleSpeed);
+                                    targetFollowSpeed = Math.min(targetFollowSpeed, safeTargetSpeed);
                                 }
                             }
                         }
 
-                        if (!brakeInRoundabout) {
-                            car.speed = Math.min(1.4, car.speed + 0.03);
-                        }
-
-                        car.roundaboutAngle -= 0.024 * car.speed;
-                        car.x = rNode.x + Math.cos(car.roundaboutAngle) * laneRadius;
-                        car.y = rNode.y + Math.sin(car.roundaboutAngle) * laneRadius;
-                        car.angle = car.roundaboutAngle - Math.PI / 2;
-
-                        let exitAngle = Math.atan2(car.nextNode.y - rNode.y, car.nextNode.x - rNode.x);
-                        let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-                        let normExitAngle = ((exitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-                        let diff = Math.abs(normCarAngle - normExitAngle);
-                        if (!brakeInRoundabout && (diff < 0.28 || diff > Math.PI * 2 - 0.28)) {
-                            car.inRoundabout = false;
-                            car.roundaboutAngle = null;
-                            car.currentNode = car.nextNode;
-                            car.pathIdx++;
-                            if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
-                                cars.splice(i, 1); budget += 25; updateUI(); continue;
-                            } else {
-                                car.nextNode = car.path[car.pathIdx + 1];
-                                if (edge) car.lane = selectBestLane(car.currentNode, car.nextNode, edge);
+                        // Check B: Other car has exited onto our target outbound road but is still queueing near the exit
+                        if (!other.inRoundabout && destNode && other.currentNode === rNode && other.nextNode === destNode) {
+                            let dist = Math.hypot(other.x - car.x, other.y - car.y);
+                            if (dist < 24) {
+                                brakeInRoundabout = true;
+                                if (dist < 16) {
+                                    targetFollowSpeed = Math.min(targetFollowSpeed, 0);
+                                } else {
+                                    let safeTargetSpeed = Math.max(0.3, ((dist - 14) / 22) * maxCircleSpeed);
+                                    targetFollowSpeed = Math.min(targetFollowSpeed, safeTargetSpeed);
+                                }
                             }
                         }
-                        continue;
                     }
+
+                    if (brakeInRoundabout) {
+                        car.speed = Math.max(0, Math.min(car.speed, targetFollowSpeed));
+                    } else {
+                        car.speed = Math.min(maxCircleSpeed, car.speed + 0.08);
+                    }
+
+                    // Anti-gridlock crawl: Ensure cars in the roundabout never get stuck in a mutual lock
+                    if (car.speed < 0.25) {
+                        car.stuckTimer = (car.stuckTimer || 0) + 1;
+                        if (car.stuckTimer > 25) {
+                            car.speed = 0.45; // Anti-deadlock crawl to reach exit
+                        }
+                    } else {
+                        car.stuckTimer = 0;
+                    }
+
+                    // Physically accurate angular velocity v / r
+                    let angularVelocity = car.speed / laneRadius;
+                    car.roundaboutAngle -= angularVelocity;
+                    car.x = rNode.x + Math.cos(car.roundaboutAngle) * laneRadius;
+                    car.y = rNode.y + Math.sin(car.roundaboutAngle) * laneRadius;
+                    car.angle = car.roundaboutAngle - Math.PI / 2;
+
+                    if (destNode && destNode !== rNode) {
+                        let outDx = destNode.x - rNode.x;
+                        let outDy = destNode.y - rNode.y;
+                        let outLen = Math.hypot(outDx, outDy) || 1;
+                        let outDirX = outDx / outLen;
+                        let outDirY = outDy / outLen;
+                        let outRightNx = -outDirY;
+                        let outRightNy = outDirX;
+                        let outLaneOffset = 4 + (car.lane * 7);
+                        let exitBackoff = Math.sqrt(Math.max(0, laneRadius * laneRadius - outLaneOffset * outLaneOffset));
+                        let exitPointX = rNode.x + (outDirX * exitBackoff) + (outRightNx * outLaneOffset);
+                        let exitPointY = rNode.y + (outDirY * exitBackoff) + (outRightNy * outLaneOffset);
+                        let targetExitAngle = Math.atan2(exitPointY - rNode.y, exitPointX - rNode.x);
+
+                        let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        let normExitAngle = ((targetExitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        let diff = Math.abs(normCarAngle - normExitAngle);
+                        if (diff > Math.PI) diff = 2 * Math.PI - diff;
+
+                        // Check if outbound exit space is blocked by a stationary vehicle
+                        let exitBlocked = cars.some(other => {
+                            if (other === car || other.inRoundabout) return false;
+                            let onOutbound = (other.currentNode === rNode && other.nextNode === destNode && other.lane === car.lane);
+                            return onOutbound && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 16 && other.speed < 0.2;
+                        });
+
+                        // Seamless exit onto outbound road once aligned (0.35 rad window)
+                        if (diff < 0.35 && !exitBlocked) {
+                            car.inRoundabout = false;
+                            car.roundaboutAngle = null;
+                            car.roundaboutCenter = null;
+                            car.roundaboutExitNode = null;
+                            car.stuckTimer = 0;
+                            car.x = exitPointX;
+                            car.y = exitPointY;
+                            car.angle = Math.atan2(outDy, outDx);
+                            car.currentNode = rNode;
+                            car.nextNode = destNode;
+                            let exitEdge = edges.find(e => (e.from === car.currentNode && e.to === car.nextNode) || (e.from === car.nextNode && e.to === car.currentNode));
+                            if (exitEdge) car.lane = selectBestLane(car.currentNode, car.nextNode, exitEdge);
+
+                            let leadOutbound = cars.find(other => other !== car && other.currentNode === rNode && other.nextNode === destNode && other.lane === car.lane && Math.hypot(other.x - car.x, other.y - car.y) < 30);
+                            if (leadOutbound) {
+                                car.speed = Math.max(0.8, Math.min(car.speed, leadOutbound.speed));
+                            } else {
+                                car.speed = Math.max(car.speed, 1.4);
+                            }
+
+                            if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
+                                cars.splice(i, 1);
+                                budget += 25;
+                                addFloatingText(car.x, car.y - 10, '+$25', '#2ecc71');
+                                updateUI();
+                            }
+                        }
+                    }
+                    continue;
                 }
 
                 let dx = car.nextNode.x - car.currentNode.x;
@@ -664,19 +1224,67 @@
                 let stopRequired = false;
                 let stopLineDist = 18;
 
+                // Yield to circulating traffic and seamlessly merge when approaching a roundabout
+                if (car.nextNode.type === 'roundabout') {
+                    let rNode = car.nextNode;
+                    let specs = getRoundaboutSpecs(rNode);
+                    let targetLane = car.lane % specs.lanes;
+                    let laneRadius = specs.radius + 3 - (targetLane * 7);
+                    let entryBackoff = Math.sqrt(Math.max(0, laneRadius * laneRadius - laneOffset * laneOffset));
+
+                    let carsInRing = cars.filter(c => c.inRoundabout && c.roundaboutCenter === rNode).length;
+                    let ringCapacity = specs.lanes * 4;
+
+                    if (distToTargetNode < entryBackoff + 35) {
+                        let entryAngle = Math.atan2(car.y - rNode.y, car.x - rNode.x);
+                        let circulatingCarApproaching = cars.some(other => {
+                            if (other === car || !other.inRoundabout || other.roundaboutCenter !== rNode) return false;
+                            let angleDiff = ((other.roundaboutAngle - entryAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+                            return angleDiff > 0.08 && angleDiff < 1.15;
+                        });
+
+                        if (circulatingCarApproaching || carsInRing >= ringCapacity) {
+                            stopRequired = true;
+                            if (distToTargetNode <= entryBackoff + 3) {
+                                car.speed = 0;
+                            } else {
+                                let targetDecelSpeed = Math.max(0.2, ((distToTargetNode - entryBackoff) / 25) * roadStyle.speedLimit);
+                                car.speed = Math.max(0, Math.min(targetDecelSpeed, car.speed - 0.15));
+                            }
+                        }
+                    }
+
+                    // Seamless merge directly into circular arc at the exact geometric tangent point
+                    if (!stopRequired && distToTargetNode <= entryBackoff + 2) {
+                        car.inRoundabout = true;
+                        car.roundaboutCenter = rNode;
+                        car.roundaboutLane = targetLane;
+                        car.roundaboutAngle = Math.atan2(car.y - rNode.y, car.x - rNode.x);
+                        let nextExitNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                        car.roundaboutExitNode = nextExitNode;
+                        car.currentNode = rNode;
+                        car.nextNode = nextExitNode || car.targetHubNode;
+                        car.pathIdx++;
+                    }
+                }
+
                 if (car.nextNode.type === 'stopsign' && !car.stoppedAtStopSign) {
                     if (distToTargetNode < 45) {
                         stopRequired = true;
                         if (distToTargetNode <= stopLineDist + 3) {
                             car.speed = 0;
                             car.stopTimer++;
-                            if (car.stopTimer > 25) {
+                            if (car.stopTimer > 20) {
                                 car.stoppedAtStopSign = true;
                                 stopRequired = false;
                             }
                         } else {
-                            let targetDecelSpeed = Math.max(0.2, ((distToTargetNode - stopLineDist) / 27) * roadStyle.speedLimit);
-                            car.speed = Math.min(car.speed, targetDecelSpeed);
+                            let targetDecelSpeed = Math.max(0.3, ((distToTargetNode - stopLineDist) / 27) * roadStyle.speedLimit);
+                            if (car.speed < targetDecelSpeed) {
+                                car.speed = Math.min(targetDecelSpeed, car.speed + 0.08);
+                            } else {
+                                car.speed = Math.max(targetDecelSpeed, car.speed - 0.2);
+                            }
                         }
                     }
                 }
@@ -689,8 +1297,12 @@
                         if (distToTargetNode <= stopLineDist + 3) {
                             car.speed = 0;
                         } else {
-                            let targetDecelSpeed = Math.max(0.2, ((distToTargetNode - stopLineDist) / 32) * roadStyle.speedLimit);
-                            car.speed = Math.min(car.speed, targetDecelSpeed);
+                            let targetDecelSpeed = Math.max(0.3, ((distToTargetNode - stopLineDist) / 32) * roadStyle.speedLimit);
+                            if (car.speed < targetDecelSpeed) {
+                                car.speed = Math.min(targetDecelSpeed, car.speed + 0.08);
+                            } else {
+                                car.speed = Math.max(targetDecelSpeed, car.speed - 0.2);
+                            }
                         }
                     }
                 }
@@ -698,7 +1310,7 @@
                 // Vehicle-to-vehicle braking and queuing check
                 let brakeForCar = false;
                 let minFollowGap = 20;
-                let lookaheadDist = minFollowGap + Math.max(18, car.speed * 12);
+                let lookaheadDist = minFollowGap + Math.max(20, car.speed * 12);
 
                 for (let j = 0; j < cars.length; j++) {
                     if (i === j) continue;
@@ -713,41 +1325,55 @@
                                 car.speed = 0;
                                 break;
                             } else {
-                                let safeFollowSpeed = Math.min(other.speed, ((forwardDist - minFollowGap) / (lookaheadDist - minFollowGap)) * roadStyle.speedLimit);
-                                car.speed = Math.max(0, Math.min(car.speed, safeFollowSpeed));
+                                let gapRatio = (forwardDist - minFollowGap) / (lookaheadDist - minFollowGap);
+                                let approachSpeed = Math.max(0.2, gapRatio * roadStyle.speedLimit);
+                                if (other.speed > 0) {
+                                    car.speed = Math.min(car.speed, Math.max(other.speed, approachSpeed));
+                                } else {
+                                    car.speed = Math.min(car.speed, approachSpeed);
+                                }
                             }
                         }
                     } 
-                    // Case 2: Approaching intersection (distToTargetNode < 35) with conflict resolution
-                    else if (distToTargetNode < 35) {
-                        // If other car is approaching the SAME intersection node
+                    // Case 2: At stop sign intersection — check priority once stopped and ready to cross
+                    else if (car.nextNode.type === 'stopsign' && car.stoppedAtStopSign && !car.crossingIntersection && distToTargetNode <= 22) {
+                        // Check other cars stopped at the same stop sign
                         if (other.nextNode === car.nextNode) {
                             let otherDist = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
-                            // Priority goes to the car that completed stop first (or tie break by index)
-                            let otherHasPriority = (other.stoppedAtStopSign && !car.stoppedAtStopSign) ||
-                                (other.stoppedAtStopSign && car.stoppedAtStopSign && (other.stopTimer > car.stopTimer || (other.stopTimer === car.stopTimer && j < i)));
+                            let otherHasPriority = other.stoppedAtStopSign &&
+                                (other.stopTimer > car.stopTimer || (other.stopTimer === car.stopTimer && j < i));
                             
-                            if (otherHasPriority && otherDist < 26) {
+                            if (otherHasPriority && otherDist < 24) {
                                 brakeForCar = true;
                                 car.speed = 0;
                                 break;
                             }
                         }
-                        // If other car is currently departing the intersection node in our outbound lane
-                        let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
-                        if (nextNextNode && other.currentNode === car.nextNode && other.nextNode === nextNextNode && other.lane === car.lane) {
-                            let dist = Math.hypot(other.x - car.x, other.y - car.y);
-                            if (dist < minFollowGap + 4) {
-                                brakeForCar = true;
-                                car.speed = 0;
-                                break;
-                            }
+                        // Check if any car is currently inside the middle of the intersection box
+                        let otherDistToNode = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
+                        if (otherDistToNode < 10) {
+                            brakeForCar = true;
+                            car.speed = 0;
+                            break;
+                        }
+                    }
+                    // Case 3: Outbound lane clearance
+                    let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                    if (nextNextNode && other.currentNode === car.nextNode && other.nextNode === nextNextNode && other.lane === car.lane) {
+                        let dist = Math.hypot(other.x - car.x, other.y - car.y);
+                        if (dist < minFollowGap + 4) {
+                            brakeForCar = true;
+                            car.speed = 0;
+                            break;
                         }
                     }
                 }
 
                 if (!stopRequired && !brakeForCar) {
                     car.speed = Math.min(roadStyle.speedLimit, car.speed + 0.08);
+                    if (car.stoppedAtStopSign) {
+                        car.crossingIntersection = true;
+                    }
                 }
 
                 if (!stopRequired && !brakeForCar && (distToTarget < Math.max(10, car.speed * 2) || distToTargetNode < 12)) {
@@ -768,6 +1394,7 @@
                             }
                         }
                         car.stoppedAtStopSign = false;
+                        car.crossingIntersection = false;
                         car.stopTimer = 0;
                     }
                 } else if (car.speed > 0) {
@@ -780,17 +1407,312 @@
             }
         }
 
+        function drawHub(ctx, h, connected) {
+            ctx.save();
+            let hubNum = h.hubNumber || h.id;
+            
+            let isJammed = h.isSpawn && ((h.blockedCycles && h.blockedCycles > 0) || (h.jamFlash && h.jamFlash > 0));
+
+            // Pulsing Emergency Warning Ripple for Jammed Buildings
+            if (isJammed) {
+                let pulse = (Math.sin(Date.now() / 90) + 1) / 2;
+                let rippleRadius = 24 + pulse * 10;
+                ctx.strokeStyle = `rgba(255, 71, 87, ${0.4 + pulse * 0.55})`;
+                ctx.lineWidth = 3 + pulse * 2.5;
+                ctx.beginPath();
+                ctx.arc(h.x, h.y, rippleRadius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.fillStyle = '#ff4757';
+                ctx.font = 'bold 15px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('⚠️', h.x, h.y - 42 - (pulse * 3));
+            }
+
+            // 1. Ambient Drop Shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+            ctx.beginPath();
+            if (h.isSpawn) {
+                ctx.arc(h.x, h.y + 2, 23, 0, Math.PI * 2);
+            } else {
+                ctx.roundRect(h.x - 22, h.y - 20, 44, 44, 6);
+            }
+            ctx.fill();
+
+            if (h.isSpawn) {
+                // ==========================================
+                // 🏡 RESIDENTIAL HOMES (SUBURBAN CUL-DE-SAC)
+                // ==========================================
+                // Green Yard Estate
+                ctx.fillStyle = '#2f4f2f';
+                ctx.beginPath();
+                ctx.arc(h.x, h.y, 22, 0, Math.PI * 2);
+                ctx.fill();
+
+                // White Picket Post Perimeter / Status Outline
+                ctx.lineWidth = 2.5;
+                if (isJammed) {
+                    ctx.strokeStyle = '#ff4757';
+                    ctx.lineWidth = 3.5;
+                    ctx.setLineDash([]);
+                } else if (h.timer > 0) {
+                    ctx.strokeStyle = '#f1c40f';
+                    ctx.setLineDash([4, 3]);
+                } else if (connected) {
+                    ctx.strokeStyle = '#2ecc71';
+                    ctx.setLineDash([]);
+                } else {
+                    ctx.strokeStyle = '#e74c3c';
+                    ctx.setLineDash([]);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Cobblestone walkway
+                ctx.fillStyle = '#7f8c8d';
+                ctx.beginPath();
+                ctx.moveTo(h.x, h.y + 19);
+                ctx.lineTo(h.x - 4, h.y + 5);
+                ctx.lineTo(h.x + 4, h.y + 5);
+                ctx.fill();
+
+                // Mini Green Trees
+                ctx.fillStyle = '#1e824c';
+                ctx.beginPath(); ctx.arc(h.x - 13, h.y + 8, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(h.x + 13, h.y + 8, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#2ecc71';
+                ctx.beginPath(); ctx.arc(h.x - 14, h.y + 6.5, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(h.x + 12, h.y + 6.5, 2, 0, Math.PI * 2); ctx.fill();
+
+                // Main Suburban House (Left)
+                ctx.fillStyle = '#c0392b';
+                ctx.fillRect(h.x - 16, h.y - 12, 14, 18);
+                // Pitched Gable Roof with White Trim
+                ctx.fillStyle = '#962d22';
+                ctx.beginPath();
+                ctx.moveTo(h.x - 17, h.y - 12);
+                ctx.lineTo(h.x - 9, h.y - 19);
+                ctx.lineTo(h.x - 1, h.y - 12);
+                ctx.fill();
+                ctx.strokeStyle = '#ecf0f1';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                // Cozy glowing windows & door
+                ctx.fillStyle = '#f9ca24';
+                ctx.fillRect(h.x - 13, h.y - 8, 3.5, 3.5);
+                ctx.fillRect(h.x - 6.5, h.y - 8, 3.5, 3.5);
+                ctx.fillStyle = '#4b1e19';
+                ctx.fillRect(h.x - 10, h.y, 4, 6);
+
+                // Second Cottage (Right)
+                ctx.fillStyle = '#d35400';
+                ctx.fillRect(h.x + 2, h.y - 10, 13, 16);
+                // Roof
+                ctx.fillStyle = '#b94600';
+                ctx.beginPath();
+                ctx.moveTo(h.x + 1, h.y - 10);
+                ctx.lineTo(h.x + 8.5, h.y - 16);
+                ctx.lineTo(h.x + 16, h.y - 10);
+                ctx.fill();
+                ctx.strokeStyle = '#ecf0f1';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                // Windows
+                ctx.fillStyle = '#f6e58d';
+                ctx.fillRect(h.x + 4, h.y - 6, 3.5, 3.5);
+                ctx.fillRect(h.x + 10, h.y - 6, 3.5, 3.5);
+                ctx.fillStyle = '#5c2c16';
+                ctx.fillRect(h.x + 7, h.y + 1, 3.5, 5);
+
+            } else {
+                // ==========================================
+                // 🏢 WORKPLACE (COMMERCIAL SKYSCRAPER / FACTORY)
+                // ==========================================
+                // Concrete Industrial / Plaza Base
+                ctx.fillStyle = '#1e272e';
+                ctx.beginPath();
+                ctx.roundRect(h.x - 20, h.y - 20, 40, 40, 5);
+                ctx.fill();
+
+                // Yellow/Black Hazard loading edge indicator
+                ctx.fillStyle = '#f39c12';
+                ctx.fillRect(h.x - 16, h.y + 15, 32, 3);
+
+                // Outline Glow / Status Border
+                ctx.lineWidth = 2.5;
+                if (h.timer > 0) {
+                    ctx.strokeStyle = '#f1c40f';
+                    ctx.setLineDash([4, 3]);
+                } else if (connected) {
+                    ctx.strokeStyle = '#2ecc71';
+                    ctx.setLineDash([]);
+                } else {
+                    ctx.strokeStyle = '#e74c3c';
+                    ctx.setLineDash([]);
+                }
+                ctx.strokeRect(h.x - 20, h.y - 20, 40, 40);
+                ctx.setLineDash([]);
+
+                // Main Skyscraper Monolith Body
+                let baseColor = h.color || '#3498db';
+                ctx.fillStyle = baseColor;
+                ctx.fillRect(h.x - 15, h.y - 16, 30, 29);
+
+                // High-tech Glass Reflection Sheen
+                let grad = ctx.createLinearGradient(h.x - 15, h.y - 16, h.x + 15, h.y + 13);
+                grad.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+                grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.1)');
+                grad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(h.x - 15, h.y - 16, 30, 29);
+
+                // Curtain Wall Window Matrix
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                for (let r = 0; r < 3; r++) {
+                    for (let c = 0; c < 3; c++) {
+                        ctx.fillRect(h.x - 11 + (c * 8.5), h.y - 12 + (r * 7.5), 5.5, 4);
+                    }
+                }
+
+                // Rooftop HVAC & Antenna Tower with Beacon
+                ctx.fillStyle = '#2f3542';
+                ctx.fillRect(h.x - 7, h.y - 19, 14, 4);
+                // Antenna mast
+                ctx.strokeStyle = '#dcdde1';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(h.x + 4, h.y - 19);
+                ctx.lineTo(h.x + 4, h.y - 25);
+                ctx.stroke();
+                // Red Warning Beacon
+                ctx.fillStyle = '#ff4757';
+                ctx.beginPath();
+                ctx.arc(h.x + 4, h.y - 25, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 3. Floating Identity Pill (Top)
+            let labelText = h.isSpawn ? `🏡 Town #${hubNum}` : `🏢 Job #${hubNum}`;
+            ctx.font = 'bold 10px sans-serif';
+            let textWidth = ctx.measureText(labelText).width;
+            let pillW = Math.max(76, textWidth + 14);
+            let pillH = 17;
+            let pillY = h.y - 35;
+
+            ctx.fillStyle = 'rgba(15, 20, 25, 0.92)';
+            ctx.beginPath();
+            ctx.roundRect(h.x - pillW / 2, pillY, pillW, pillH, 8);
+            ctx.fill();
+            ctx.strokeStyle = h.isSpawn ? '#e74c3c' : (h.color || '#3498db');
+            ctx.lineWidth = 1.3;
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.fillText(labelText, h.x, pillY + 12);
+
+            // 4. Floating Status Tag (Bottom)
+            if (isJammed) {
+                let pulse = (Math.sin(Date.now() / 90) + 1) / 2;
+                let statusW = 126;
+                let statusY = h.y + 26;
+                ctx.fillStyle = `rgba(235, 77, 75, ${0.92 + pulse * 0.08})`;
+                ctx.beginPath();
+                ctx.roundRect(h.x - statusW / 2, statusY, statusW, 18, 9);
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 9.5px sans-serif';
+                ctx.fillText('⚠️ EXIT JAMMED (-$50)', h.x, statusY + 12.5);
+            } else if (h.timer > 0) {
+                let timerW = 86;
+                let timerY = h.y + 26;
+                ctx.fillStyle = 'rgba(20, 24, 28, 0.92)';
+                ctx.beginPath();
+                ctx.roundRect(h.x - timerW / 2, timerY, timerW, 16, 8);
+                ctx.fill();
+                ctx.strokeStyle = '#f1c40f';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.fillStyle = '#f1c40f';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.fillText(`⏳ Opens in ${h.timer}s`, h.x, timerY + 11.5);
+            } else {
+                let statusW = connected ? 76 : 88;
+                let statusY = h.y + 26;
+                ctx.fillStyle = 'rgba(20, 24, 28, 0.92)';
+                ctx.beginPath();
+                ctx.roundRect(h.x - statusW / 2, statusY, statusW, 16, 8);
+                ctx.fill();
+                ctx.strokeStyle = connected ? '#2ecc71' : '#e74c3c';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.fillStyle = connected ? '#2ecc71' : '#ff7675';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.fillText(connected ? '🟢 Connected' : '🔴 Needs Road', h.x, statusY + 11.5);
+            }
+
+            ctx.restore();
+        }
+
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            ctx.strokeStyle = "rgba(255,255,255,0.03)";
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(-camera.x, -camera.y);
+
+            // 1. Playable World Terrain
+            ctx.fillStyle = '#3c5a35';
+            ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+            // 2. Playable Area Grid
+            ctx.strokeStyle = "rgba(255,255,255,0.04)";
             ctx.lineWidth = 1;
-            for (let x = 0; x < canvas.width; x += GRID) {
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            for (let x = 0; x <= WORLD_WIDTH; x += GRID) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_HEIGHT); ctx.stroke();
             }
-            for (let y = 0; y < canvas.height; y += GRID) {
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            for (let y = 0; y <= WORLD_HEIGHT; y += GRID) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_WIDTH, y); ctx.stroke();
             }
+
+            // 3. Obvious City Limits Perimeter Boundary
+            // Ambient outer glow
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0, 168, 255, 0.25)';
+            ctx.lineWidth = 14;
+            ctx.strokeRect(-7, -7, WORLD_WIDTH + 14, WORLD_HEIGHT + 14);
+
+            // Neon perimeter boundary
+            ctx.strokeStyle = '#00a8ff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+            // Corner decorative brackets
+            let bracketLen = 40;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3.5;
+            // Top-Left
+            ctx.beginPath(); ctx.moveTo(0, bracketLen); ctx.lineTo(0, 0); ctx.lineTo(bracketLen, 0); ctx.stroke();
+            // Top-Right
+            ctx.beginPath(); ctx.moveTo(WORLD_WIDTH - bracketLen, 0); ctx.lineTo(WORLD_WIDTH, 0); ctx.lineTo(WORLD_WIDTH, bracketLen); ctx.stroke();
+            // Bottom-Left
+            ctx.beginPath(); ctx.moveTo(0, WORLD_HEIGHT - bracketLen); ctx.lineTo(0, WORLD_HEIGHT); ctx.lineTo(bracketLen, WORLD_HEIGHT); ctx.stroke();
+            // Bottom-Right
+            ctx.beginPath(); ctx.moveTo(WORLD_WIDTH - bracketLen, WORLD_HEIGHT); ctx.lineTo(WORLD_WIDTH, WORLD_HEIGHT); ctx.lineTo(WORLD_WIDTH, WORLD_HEIGHT - bracketLen); ctx.stroke();
+
+            // Boundary Badges
+            ctx.fillStyle = 'rgba(0, 168, 255, 0.9)';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('⚡ CITY LIMITS (PLAYABLE REGION) ⚡', WORLD_WIDTH / 2, -14);
+            ctx.fillText('⚡ CITY LIMITS ⚡', WORLD_WIDTH / 2, WORLD_HEIGHT + 24);
+            ctx.restore();
 
             missingPathLines.forEach(l => {
                 ctx.save();
@@ -814,19 +1736,44 @@
                 ctx.lineTo(e.to.x, e.to.y);
                 ctx.stroke();
 
-                if (showHeatmap && e.congestion > 4) {
-                    let heatAlpha = Math.min(0.85, e.congestion / 100);
-                    ctx.strokeStyle = `rgba(231, 76, 60, ${heatAlpha})`;
-                    ctx.lineWidth = style.width + 8;
-                    ctx.stroke();
-                }
-
                 let dx = e.to.x - e.from.x;
                 let dy = e.to.y - e.from.y;
                 let len = Math.hypot(dx, dy);
                 if (len > 0) {
                     let nx = dy / len;
                     let ny = -dx / len;
+
+                    // Heatmap: Close-hugging gradual ambient glow along the road edges
+                    if (showHeatmap && e.congestion > 5) {
+                        ctx.save();
+                        let congRatio = Math.min(1.0, e.congestion / 100);
+                        let hue = Math.max(0, 120 - (congRatio * 130)); // 120 (green) -> 60 (yellow) -> 0 (crimson red)
+                        let baseAlpha = 0.25 + (congRatio * 0.65);
+                        let shoulderOffset = (style.width / 2) - 1;
+
+                        // Soft gradual outer blend
+                        ctx.strokeStyle = `hsla(${hue}, 85%, 55%, ${baseAlpha * 0.4})`;
+                        ctx.lineWidth = 6;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(e.from.x - nx * shoulderOffset, e.from.y - ny * shoulderOffset);
+                        ctx.lineTo(e.to.x - nx * shoulderOffset, e.to.y - ny * shoulderOffset);
+                        ctx.moveTo(e.from.x + nx * shoulderOffset, e.from.y + ny * shoulderOffset);
+                        ctx.lineTo(e.to.x + nx * shoulderOffset, e.to.y + ny * shoulderOffset);
+                        ctx.stroke();
+
+                        // Crisp inner curb highlight
+                        ctx.strokeStyle = `hsla(${hue}, 90%, 55%, ${baseAlpha})`;
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(e.from.x - nx * shoulderOffset, e.from.y - ny * shoulderOffset);
+                        ctx.lineTo(e.to.x - nx * shoulderOffset, e.to.y - ny * shoulderOffset);
+                        ctx.moveTo(e.from.x + nx * shoulderOffset, e.from.y + ny * shoulderOffset);
+                        ctx.lineTo(e.to.x + nx * shoulderOffset, e.to.y + ny * shoulderOffset);
+                        ctx.stroke();
+
+                        ctx.restore();
+                    }
 
                     ctx.strokeStyle = style.line;
                     ctx.lineWidth = 2;
@@ -856,13 +1803,45 @@
             });
 
             if (dragStartNode) {
-                let targetNode = resolveNodeFromCoords(mousePos.x, mousePos.y);
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-                ctx.lineWidth = ROAD_TYPES[currentTool].width;
-                ctx.beginPath();
-                ctx.moveTo(dragStartNode.x, dragStartNode.y);
-                ctx.lineTo(targetNode.x, targetNode.y);
-                ctx.stroke();
+                let targetNode = getStraightTargetNode(dragStartNode, mousePos.x, mousePos.y);
+                if (currentTool in ROAD_TYPES) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+                    ctx.lineWidth = ROAD_TYPES[currentTool].width;
+                    ctx.beginPath();
+                    ctx.moveTo(dragStartNode.x, dragStartNode.y);
+                    ctx.lineTo(targetNode.x, targetNode.y);
+                    ctx.stroke();
+                } else if (currentTool === 'delete') {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(231, 76, 60, 0.7)';
+                    ctx.lineWidth = 26;
+                    ctx.setLineDash([8, 6]);
+                    ctx.beginPath();
+                    ctx.moveTo(dragStartNode.x, dragStartNode.y);
+                    ctx.lineTo(targetNode.x, targetNode.y);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (currentTool === 'upgrade') {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(0, 206, 201, 0.75)';
+                    ctx.lineWidth = 28;
+                    ctx.setLineDash([10, 6]);
+                    ctx.beginPath();
+                    ctx.moveTo(dragStartNode.x, dragStartNode.y);
+                    ctx.lineTo(targetNode.x, targetNode.y);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (currentTool === 'downgrade') {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(243, 156, 18, 0.75)';
+                    ctx.lineWidth = 28;
+                    ctx.setLineDash([10, 6]);
+                    ctx.beginPath();
+                    ctx.moveTo(dragStartNode.x, dragStartNode.y);
+                    ctx.lineTo(targetNode.x, targetNode.y);
+                    ctx.stroke();
+                    ctx.restore();
+                }
             }
 
             nodes.forEach(n => {
@@ -870,7 +1849,6 @@
                     let specs = getRoundaboutSpecs(n);
                     ctx.fillStyle = '#2c3e50';
                     ctx.beginPath(); ctx.arc(n.x, n.y, specs.radius + 8, 0, Math.PI * 2); ctx.fill();
-                    ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2; ctx.stroke();
 
                     ctx.fillStyle = '#47693e';
                     ctx.beginPath(); ctx.arc(n.x, n.y, specs.radius - (specs.lanes * 7), 0, Math.PI * 2); ctx.fill();
@@ -909,42 +1887,7 @@
 
             hubs.forEach(h => {
                 let connected = isHubConnected(h);
-
-                ctx.fillStyle = h.color;
-                ctx.fillRect(h.x - 20, h.y - 20, 40, 40);
-
-                if (h.timer > 0) {
-                    ctx.strokeStyle = '#f1c40f';
-                    ctx.lineWidth = 3.5;
-                } else if (connected) {
-                    ctx.strokeStyle = '#2ecc71';
-                    ctx.lineWidth = 3.0;
-                } else {
-                    ctx.strokeStyle = '#e74c3c';
-                    ctx.lineWidth = 3.5;
-                }
-                ctx.strokeRect(h.x - 20, h.y - 20, 40, 40);
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 11px sans-serif';
-                ctx.textAlign = 'center';
-
-                if (h.timer > 0) {
-                    ctx.fillText(`⏳ Opening in ${h.timer}s`, h.x, h.y - 25);
-                    ctx.fillStyle = '#f1c40f';
-                    ctx.font = 'bold 14px sans-serif';
-                    ctx.fillText(`${h.timer}s`, h.x, h.y + 5);
-                } else {
-                    ctx.fillText(h.isSpawn ? '🏡 Town' : '🏭 Job Center', h.x, h.y - 25);
-
-                    if (connected) {
-                        ctx.fillStyle = '#2ecc71';
-                        ctx.fillText('🟢 Connected', h.x, h.y + 35);
-                    } else {
-                        ctx.fillStyle = '#ff4757';
-                        ctx.fillText('🔴 Unconnected', h.x, h.y + 35);
-                    }
-                }
+                drawHub(ctx, h, connected);
             });
 
             cars.forEach(c => {
@@ -966,6 +1909,8 @@
                 ctx.fillText(ft.text, ft.x, ft.y);
                 ctx.restore();
             });
+
+            ctx.restore();
 
             requestAnimationFrame(() => { update(); draw(); });
         }
