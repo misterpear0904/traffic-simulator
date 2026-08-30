@@ -227,6 +227,7 @@
         };
 
         const JOB_COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#e74c3c', '#fd79a8', '#00cec9'];
+        const TOWN_COLORS = ['#ff6b6b', '#feca57', '#48dbfb', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3', '#ff9f43', '#10ac84', '#ee5a24'];
 
         function resize() {
             canvas.width = window.innerWidth || document.documentElement.clientWidth || 1024;
@@ -640,6 +641,9 @@
             let townCount = hubs.filter(h => h.isSpawn).length;
             let jobCount = hubs.filter(h => !h.isSpawn).length;
             let hubNumber = isSpawn ? (townCount + 1) : (jobCount + 1);
+            let hubColor = isSpawn
+                ? TOWN_COLORS[townCount % TOWN_COLORS.length]
+                : JOB_COLORS[jobCount % JOB_COLORS.length];
 
             let newHub = {
                 id: hubs.length + 1,
@@ -647,7 +651,7 @@
                 x: hubX,
                 y: hubY,
                 isSpawn: isSpawn,
-                color: isSpawn ? '#e74c3c' : JOB_COLORS[colorIdx],
+                color: hubColor,
                 name: isSpawn ? `Town #${hubNumber}` : `Job #${hubNumber}`,
                 timer: gracePeriod
             };
@@ -1064,7 +1068,7 @@
                                 targetHubNode: endNode,
                                 speed: initialSpeed,
                                 lane: assignedLane,
-                                color: isToJob ? destinationHub.color : startOriginHub.color,
+                                color: destinationHub.color,
                                 angle: Math.atan2(dy0, dx0),
                                 stopTimer: 0,
                                 stoppedAtStopSign: false,
@@ -1267,26 +1271,24 @@
                         let exitBackoff = Math.sqrt(Math.max(0, laneRadius * laneRadius - outLaneOffset * outLaneOffset));
                         let exitPointX = rNode.x + (outDirX * exitBackoff) + (outRightNx * outLaneOffset);
                         let exitPointY = rNode.y + (outDirY * exitBackoff) + (outRightNy * outLaneOffset);
-
                         let roadAngle = Math.atan2(outDy, outDx);
-                        // For counterclockwise rotation (angle decreasing), the exit tangent
-                        // is perpendicular in the CCW sense: roadAngle - PI/2
-                        let targetExitAngle = roadAngle - Math.PI / 2;
 
-                        let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-                        let normExitAngle = ((targetExitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        // Use the angle of the exit point ON the ring as the target.
+                        // exitPointX/Y is already on the circle, so atan2 gives exact exit angle.
+                        let exitAngle = Math.atan2(exitPointY - rNode.y, exitPointX - rNode.x);
+                        let normCarAngle  = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        let normExitAngle = ((exitAngle            % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
                         let diff = Math.abs(normCarAngle - normExitAngle);
                         if (diff > Math.PI) diff = 2 * Math.PI - diff;
 
-                        // Check if outbound exit space is blocked by a stationary vehicle
+                        // Don't exit if a stopped car is sitting right at the exit mouth
                         let exitBlocked = cars.some(other => {
                             if (other === car || other.inRoundabout) return false;
-                            let onOutbound = (other.currentNode === rNode && other.nextNode === destNode && other.lane === car.lane);
-                            return onOutbound && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 18 && other.speed < 0.2;
+                            return other.speed < 0.15 && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 20;
                         });
 
-                        // Exit once aligned (0.6 rad window), OR after 0.85 laps as fail-safe
-                        if ((diff < 0.6 || car.roundaboutLaps >= 0.85) && !exitBlocked) {
+                        // Exit when within 0.5 rad of exit point, or after 0.9 laps (hard failsafe)
+                        if ((diff < 0.5 || car.roundaboutLaps >= 0.9) && !exitBlocked) {
                             car.inRoundabout = false;
                             car.roundaboutAngle = null;
                             car.roundaboutCenter = null;
@@ -1298,16 +1300,11 @@
                             car.angle = roadAngle;
                             car.currentNode = rNode;
                             car.nextNode = destNode;
-                            car.pathIdx++; // advance past the roundabout node
+                            car.pathIdx++;
                             let exitEdge = edges.find(e => (e.from === car.currentNode && e.to === car.nextNode) || (e.from === car.nextNode && e.to === car.currentNode));
                             if (exitEdge) car.lane = selectBestLane(car.currentNode, car.nextNode, exitEdge);
-
                             let leadOutbound = cars.find(other => other !== car && other.currentNode === rNode && other.nextNode === destNode && other.lane === car.lane && Math.hypot(other.x - car.x, other.y - car.y) < 30);
-                            if (leadOutbound) {
-                                car.speed = Math.max(0.8, Math.min(car.speed, leadOutbound.speed));
-                            } else {
-                                car.speed = Math.max(car.speed, 1.4);
-                            }
+                            car.speed = leadOutbound ? Math.max(0.8, Math.min(car.speed, leadOutbound.speed)) : Math.max(car.speed, 1.4);
                         }
                     }
                     continue;
@@ -1449,35 +1446,35 @@
                     } 
                     // Case 2: At stop sign intersection — check priority once stopped and ready to cross
                     else if (car.nextNode.type === 'stopsign' && car.stoppedAtStopSign && !car.crossingIntersection && distToTargetNode <= 22) {
-                        // Check other cars stopped at the same stop sign
+                        // Check other cars stopped at the same stop sign with priority
                         if (other.nextNode === car.nextNode) {
                             let otherDist = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
                             let otherHasPriority = other.stoppedAtStopSign &&
                                 (other.stopTimer > car.stopTimer || (other.stopTimer === car.stopTimer && j < i));
-                            
                             if (otherHasPriority && otherDist < 24) {
                                 brakeForCar = true;
                                 car.speed = 0;
                                 break;
                             }
                         }
-                        // Check if any car is currently inside the middle of the intersection box
+                        // Block if ANY car is physically inside the intersection box
                         let otherDistToNode = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
-                        if (otherDistToNode < 10) {
+                        if (otherDistToNode < 12) {
                             brakeForCar = true;
                             car.speed = 0;
                             break;
                         }
-                        // Anti-blocking: Don't enter the intersection if the outbound lane ahead is jammed
-                        // (prevents gridlock by ensuring there is space to exit on the far side)
+                        // Anti box-blocking: check if a car is stuck in the exit mouth (within ~20px of node, slow)
                         let crossNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
                         if (crossNextNode) {
-                            let outboundJammed = cars.some(oc => {
-                                if (oc === car) return false;
-                                let onOutbound = oc.currentNode === car.nextNode && oc.nextNode === crossNextNode && oc.lane === car.lane;
-                                return onOutbound && oc.speed < 0.3;
-                            });
-                            if (outboundJammed) {
+                            // The exit mouth is just beyond the stopsign node toward crossNextNode
+                            let mouthDx = crossNextNode.x - car.nextNode.x;
+                            let mouthDy = crossNextNode.y - car.nextNode.y;
+                            let mouthLen = Math.hypot(mouthDx, mouthDy) || 1;
+                            let exitMouthX = car.nextNode.x + (mouthDx / mouthLen) * 18;
+                            let exitMouthY = car.nextNode.y + (mouthDy / mouthLen) * 18;
+                            if (!other.inRoundabout && other.speed < 0.1 &&
+                                Math.hypot(other.x - exitMouthX, other.y - exitMouthY) < 18) {
                                 brakeForCar = true;
                                 car.speed = 0;
                                 break;
@@ -1611,16 +1608,22 @@
                 ctx.beginPath(); ctx.arc(h.x - 14, h.y + 6.5, 2, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(h.x + 12, h.y + 6.5, 2, 0, Math.PI * 2); ctx.fill();
 
-                // Main Suburban House (Left)
-                ctx.fillStyle = '#c0392b';
+                // Main Suburban House (Left) — tinted with town's color
+                let tc = h.color || '#c0392b';
+                // Parse hex to a slightly darker shade for the roof
+                ctx.fillStyle = tc;
                 ctx.fillRect(h.x - 16, h.y - 12, 14, 18);
-                // Pitched Gable Roof with White Trim
-                ctx.fillStyle = '#962d22';
+                // Pitched Gable Roof (darker tint)
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.fillRect(h.x - 16, h.y - 12, 14, 18); // darken wall slightly
+                ctx.fillStyle = tc;
+                ctx.globalAlpha = 0.7;
                 ctx.beginPath();
                 ctx.moveTo(h.x - 17, h.y - 12);
                 ctx.lineTo(h.x - 9, h.y - 19);
                 ctx.lineTo(h.x - 1, h.y - 12);
                 ctx.fill();
+                ctx.globalAlpha = 1.0;
                 ctx.strokeStyle = '#ecf0f1';
                 ctx.lineWidth = 1.2;
                 ctx.stroke();
@@ -1632,16 +1635,20 @@
                 ctx.fillStyle = '#4b1e19';
                 ctx.fillRect(h.x - 10, h.y, 4, 6);
 
-                // Second Cottage (Right)
-                ctx.fillStyle = '#d35400';
+                // Second Cottage (Right) — brighter shade of town color
+                ctx.fillStyle = tc;
+                ctx.globalAlpha = 0.85;
                 ctx.fillRect(h.x + 2, h.y - 10, 13, 16);
+                ctx.globalAlpha = 1.0;
                 // Roof
-                ctx.fillStyle = '#b94600';
+                ctx.fillStyle = tc;
+                ctx.globalAlpha = 0.55;
                 ctx.beginPath();
                 ctx.moveTo(h.x + 1, h.y - 10);
                 ctx.lineTo(h.x + 8.5, h.y - 16);
                 ctx.lineTo(h.x + 16, h.y - 10);
                 ctx.fill();
+                ctx.globalAlpha = 1.0;
                 ctx.strokeStyle = '#ecf0f1';
                 ctx.lineWidth = 1.2;
                 ctx.stroke();
