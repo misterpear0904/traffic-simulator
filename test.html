@@ -331,32 +331,6 @@
                     }
                 }
             });
-
-            // Jam penalty for heavily congested roads
-            edges.forEach(e => {
-                if (e.congestion >= 55) {
-                    let fine = Math.round(5 + ((e.congestion - 55) / 45) * 15);
-                    budget -= fine;
-                    let midX = (e.from.x + e.to.x) / 2;
-                    let midY = (e.from.y + e.to.y) / 2;
-                    addFloatingText(midX, midY - 12, `-$${fine} Jam Penalty`, '#e74c3c');
-                    updateUI();
-                }
-            });
-
-            // Jam penalty for vehicles stuck in gridlock for too long
-            cars.forEach(c => {
-                if (c.speed < 0.3) {
-                    c.stuckSeconds = (c.stuckSeconds || 0) + 1;
-                    if (c.stuckSeconds >= 8 && c.stuckSeconds % 4 === 0) {
-                        budget -= 10;
-                        addFloatingText(c.x, c.y - 12, '-$10 Jam Penalty', '#e74c3c');
-                        updateUI();
-                    }
-                } else {
-                    c.stuckSeconds = Math.max(0, (c.stuckSeconds || 0) - 1);
-                }
-            });
         }, 1000);
 
         function setTool(tool) {
@@ -513,8 +487,15 @@
                                 roundaboutLane: 0,
                                 roundaboutAngle: null
                             });
+                        } else {
+                            // Car cannot get out of town due to traffic jam at the exit
+                            budget -= 10;
+                            addFloatingText(startTown.x, startTown.y - 18, '-$10 Jam Penalty', '#e74c3c');
                         }
                     } else {
+                        // Car cannot get out of town due to no road connection to job center
+                        budget -= 10;
+                        addFloatingText(startTown.x, startTown.y - 18, '-$10 Jam Penalty', '#e74c3c');
                         missingPathLines.push({
                             x1: startTown.x, y1: startTown.y,
                             x2: targetJob.x, y2: targetJob.y,
