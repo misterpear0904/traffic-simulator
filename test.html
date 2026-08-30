@@ -1267,10 +1267,11 @@
                         let exitBackoff = Math.sqrt(Math.max(0, laneRadius * laneRadius - outLaneOffset * outLaneOffset));
                         let exitPointX = rNode.x + (outDirX * exitBackoff) + (outRightNx * outLaneOffset);
                         let exitPointY = rNode.y + (outDirY * exitBackoff) + (outRightNy * outLaneOffset);
-                        
+
                         let roadAngle = Math.atan2(outDy, outDx);
-                        // Geometric tangent angle for clockwise circulation leaving into outbound lane
-                        let targetExitAngle = roadAngle + Math.PI / 2;
+                        // For counterclockwise rotation (angle decreasing), the exit tangent
+                        // is perpendicular in the CCW sense: roadAngle - PI/2
+                        let targetExitAngle = roadAngle - Math.PI / 2;
 
                         let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
                         let normExitAngle = ((targetExitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -1284,8 +1285,8 @@
                             return onOutbound && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 18 && other.speed < 0.2;
                         });
 
-                        // Seamless exit onto outbound road once aligned (or after 1 full lap fail-safe)
-                        if ((diff < 0.45 || car.roundaboutLaps >= 1.0) && !exitBlocked) {
+                        // Exit once aligned (0.6 rad window), OR after 0.85 laps as fail-safe
+                        if ((diff < 0.6 || car.roundaboutLaps >= 0.85) && !exitBlocked) {
                             car.inRoundabout = false;
                             car.roundaboutAngle = null;
                             car.roundaboutCenter = null;
@@ -1297,6 +1298,7 @@
                             car.angle = roadAngle;
                             car.currentNode = rNode;
                             car.nextNode = destNode;
+                            car.pathIdx++; // advance past the roundabout node
                             let exitEdge = edges.find(e => (e.from === car.currentNode && e.to === car.nextNode) || (e.from === car.nextNode && e.to === car.currentNode));
                             if (exitEdge) car.lane = selectBestLane(car.currentNode, car.nextNode, exitEdge);
 
@@ -1990,6 +1992,40 @@
             nodes.forEach(n => {
                 if (n.type === 'roundabout') {
                     let specs = getRoundaboutSpecs(n);
+
+                    // Heatmap: color the ring based on how many cars are circulating
+                    if (showHeatmap) {
+                        let carsInRing = cars.filter(c => c.inRoundabout && c.roundaboutCenter === n).length;
+                        let ringCapacity = specs.lanes * 4;
+                        let congRatio = Math.min(1.0, carsInRing / Math.max(1, ringCapacity));
+                        if (congRatio > 0.05) {
+                            let r, g, b;
+                            if (congRatio < 0.33) {
+                                let t = congRatio / 0.33;
+                                r = Math.round(30 + t * 195); g = 220; b = 30;
+                            } else if (congRatio < 0.66) {
+                                let t = (congRatio - 0.33) / 0.33;
+                                r = 255; g = Math.round(220 - t * 180); b = 0;
+                            } else {
+                                let t = (congRatio - 0.66) / 0.34;
+                                r = 255; g = Math.round(40 - t * 40); b = 0;
+                            }
+                            ctx.save();
+                            ctx.globalCompositeOperation = 'screen';
+                            let heatGrad = ctx.createRadialGradient(n.x, n.y, specs.radius - specs.lanes * 7, n.x, n.y, specs.radius + 10);
+                            heatGrad.addColorStop(0, `rgba(${r},${g},${b},0)`);
+                            heatGrad.addColorStop(0.4, `rgba(${r},${g},${b},${0.25 + congRatio * 0.5})`);
+                            heatGrad.addColorStop(0.75, `rgba(${r},${g},${b},${0.18 + congRatio * 0.35})`);
+                            heatGrad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                            ctx.fillStyle = heatGrad;
+                            ctx.beginPath();
+                            ctx.arc(n.x, n.y, specs.radius + 10, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.globalCompositeOperation = 'source-over';
+                            ctx.restore();
+                        }
+                    }
+
                     ctx.fillStyle = '#2c3e50';
                     ctx.beginPath(); ctx.arc(n.x, n.y, specs.radius + 8, 0, Math.PI * 2); ctx.fill();
 
