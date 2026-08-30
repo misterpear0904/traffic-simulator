@@ -11,55 +11,62 @@
         
         #top-bar {
             position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
-            background: rgba(20, 23, 26, 0.94); padding: 12px 24px; border-radius: 30px;
-            display: flex; gap: 24px; align-items: center; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-            backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1); z-index: 10;
+            background: rgba(18, 21, 25, 0.95); padding: 12px 26px; border-radius: 30px;
+            display: flex; gap: 24px; align-items: center; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.12); z-index: 10;
         }
-        .stat-item { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; color: #fff; }
-        .stat-val { color: #2ecc71; font-weight: 700; }
+        .stat-item { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: #fff; }
+        .stat-val { color: #2ecc71; font-weight: 700; font-size: 15px; }
 
         #toolbar {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(20, 23, 26, 0.94); padding: 10px; border-radius: 16px;
-            display: flex; gap: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-            backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1); z-index: 10;
+            background: rgba(18, 21, 25, 0.95); padding: 10px 12px; border-radius: 18px;
+            display: flex; gap: 9px; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.12); z-index: 10;
         }
         .btn {
-            background: #252a2e; border: 2px solid #363d44; color: #e0e0e0;
-            padding: 8px 14px; border-radius: 10px; cursor: pointer; font-size: 12px;
-            font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 2px;
+            background: #252a2e; border: 2px solid #38414a; color: #f0f0f0;
+            padding: 9px 15px; border-radius: 11px; cursor: pointer; font-size: 13.5px;
+            font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 3px;
             transition: all 0.15s ease;
         }
-        .btn:hover { background: #363d44; border-color: #00a8ff; color: #fff; }
-        .btn.active { background: #00a8ff; border-color: #0097e6; color: #fff; box-shadow: 0 0 12px rgba(0, 168, 255, 0.4); }
-        .btn .cost { font-size: 10px; opacity: 0.7; font-weight: 400; }
+        .btn:hover { background: #38414a; border-color: #00a8ff; color: #fff; }
+        .btn.active { background: #00a8ff; border-color: #0097e6; color: #fff; box-shadow: 0 0 14px rgba(0, 168, 255, 0.45); }
+        .btn .cost { font-size: 11.5px; opacity: 0.9; font-weight: 600; color: #dcdde1; }
 
         .traffic-slider-wrap {
-            display: flex; flex-direction: column; gap: 4px; border-left: 1px solid rgba(255,255,255,0.1); padding-left: 15px; color: #fff;
+            display: flex; flex-direction: column; gap: 4px; border-left: 1px solid rgba(255,255,255,0.12); padding-left: 16px; color: #fff;
         }
-        .traffic-slider-wrap label { font-size: 11px; opacity: 0.8; }
+        .traffic-slider-wrap label { font-size: 12.5px; opacity: 0.95; font-weight: 600; }
         .traffic-slider-wrap input { width: 130px; cursor: pointer; }
 
         #zoom-controls {
             position: absolute; right: 20px; bottom: 20px;
-            background: rgba(20, 23, 26, 0.94); padding: 6px; border-radius: 14px;
+            background: rgba(18, 21, 25, 0.95); padding: 6px; border-radius: 14px;
             display: flex; flex-direction: column; align-items: center; gap: 6px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5); backdrop-filter: blur(8px);
-            border: 1px solid rgba(255,255,255,0.1); z-index: 10;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.55); backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.12); z-index: 10;
         }
         .zoom-btn {
-            width: 36px; height: 36px; background: #252a2e; border: 1px solid #363d44;
-            color: #fff; border-radius: 9px; cursor: pointer; display: flex;
-            align-items: center; justify-content: center; font-size: 14px;
+            width: 38px; height: 38px; background: #252a2e; border: 1px solid #38414a;
+            color: #fff; border-radius: 10px; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; font-size: 15px;
             font-weight: bold; transition: all 0.15s ease;
         }
         .zoom-btn:hover { background: #00a8ff; border-color: #0097e6; }
-        #zoom-level { font-size: 11px; font-weight: 700; color: #00a8ff; padding: 2px 0; }
+        #zoom-level { font-size: 12.5px; font-weight: 700; color: #00a8ff; padding: 2px 0; }
     </style>
 </head>
 <body>
 
     <div id="top-bar">
+        <div class="stat-item" id="clock-widget" title="Current simulated city time and commuter rush cycle" style="background: rgba(0,0,0,0.38); padding: 5px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; align-items: flex-start; gap: 2px;">
+            <div style="display: flex; align-items: center; gap: 7px;">
+                <span id="time-display" style="font-weight: 700; color: #f5cd79; font-size: 14px;">🕒 07:00 AM</span>
+                <span id="rush-badge" style="font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 4px; background: rgba(230, 126, 34, 0.25); color: #f39c12; border: 1px solid rgba(230, 126, 34, 0.4);">🌅 Morning Rush</span>
+            </div>
+            <span id="commute-desc" style="font-size: 11.5px; color: rgba(255,255,255,0.85); font-weight: 600;">🏡 Towns ➔ 🏢 Work (85%)</span>
+        </div>
         <div class="stat-item">Budget: <span id="budget-val" class="stat-val">$5,000</span></div>
         <div class="stat-item">Road Upkeep: <span id="upkeep-val" style="color:#e67e22">-$0 / 10s</span></div>
         <div class="stat-item">Active Traffic: <span id="cars-val" style="color:#f1c40f">0</span></div>
@@ -137,6 +144,70 @@
         let nextHubTimer = 0;
         let upkeepTimer = 0;
         let showHeatmap = false;
+        let gameMinutes = 7 * 60; // Start at 7:00 AM
+
+        function getGameTimeInfo() {
+            let totalMins = Math.floor(gameMinutes) % 1440;
+            let hours24 = Math.floor(totalMins / 60);
+            let mins = totalMins % 60;
+            let period = hours24 >= 12 ? 'PM' : 'AM';
+            let hours12 = hours24 % 12 || 12;
+            let timeStr = `${hours12.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')} ${period}`;
+
+            let phase = 'Midday Mix';
+            let phaseIcon = '☀️';
+            let phaseBadgeBg = 'rgba(46, 204, 113, 0.22)';
+            let phaseColor = '#2ecc71';
+            let phaseBorder = 'rgba(46, 204, 113, 0.4)';
+            let flowDesc = '🔄 50/50 Mixed Errands';
+            let tooltip = 'Midday Traffic: Balanced bidirectional flow (50% to jobs / 50% returning) for errands & shifts.';
+            let toJobProbability = 0.50; // 50/50 mix
+            let rushMultiplier = 1.0;
+
+            if (hours24 >= 6 && hours24 < 10) {
+                phase = 'Morning Rush';
+                phaseIcon = '🌅';
+                phaseBadgeBg = 'rgba(230, 126, 34, 0.25)';
+                phaseColor = '#f39c12';
+                phaseBorder = 'rgba(230, 126, 34, 0.45)';
+                flowDesc = '🏡 Towns ➔ 🏢 Work (85%)';
+                tooltip = 'Morning Rush: 85% of traffic flows from Towns to Workplaces (+40% traffic demand).';
+                toJobProbability = 0.85; // 85% Town -> Job
+                rushMultiplier = 1.4;
+            } else if (hours24 >= 10 && hours24 < 16) {
+                phase = 'Midday Traffic';
+                phaseIcon = '☀️';
+                phaseBadgeBg = 'rgba(52, 152, 219, 0.22)';
+                phaseColor = '#3498db';
+                phaseBorder = 'rgba(52, 152, 219, 0.4)';
+                flowDesc = '🔄 50/50 Mixed Flow';
+                tooltip = 'Midday Traffic: Balanced flow between residential and commercial centers for errands & deliveries.';
+                toJobProbability = 0.50; // 50/50 mix
+                rushMultiplier = 1.0;
+            } else if (hours24 >= 16 && hours24 < 20) {
+                phase = 'Evening Rush';
+                phaseIcon = '🌆';
+                phaseBadgeBg = 'rgba(155, 89, 182, 0.28)';
+                phaseColor = '#e056fd';
+                phaseBorder = 'rgba(155, 89, 182, 0.5)';
+                flowDesc = '🏢 Work ➔ 🏡 Towns (85%)';
+                tooltip = 'Evening Rush: 85% of traffic flows from Workplaces returning home to Towns (+40% traffic demand).';
+                toJobProbability = 0.15; // 85% Job -> Town (only 15% Town -> Job)
+                rushMultiplier = 1.4;
+            } else {
+                phase = 'Night Commute';
+                phaseIcon = '🌙';
+                phaseBadgeBg = 'rgba(52, 73, 94, 0.4)';
+                phaseColor = '#bdc3c7';
+                phaseBorder = 'rgba(127, 140, 141, 0.4)';
+                flowDesc = '🏡 Returning Home (70%)';
+                tooltip = 'Night Commute: Lighter traffic with late-shift workers mostly returning home to Towns (70%).';
+                toJobProbability = 0.30; // 70% Job -> Town, 30% Town -> Job
+                rushMultiplier = 0.75;
+            }
+
+            return { totalMins, hours24, mins, timeStr, phase, phaseIcon, phaseBadgeBg, phaseColor, phaseBorder, flowDesc, tooltip, toJobProbability, rushMultiplier };
+        }
 
         const GRID = 40;
         const WORLD_WIDTH = 2200;
@@ -905,6 +976,21 @@
 
             let zoomLevelEl = document.getElementById('zoom-level');
             if (zoomLevelEl) zoomLevelEl.innerText = `${Math.round(camera.zoom * 100)}%`;
+
+            let timeInfo = getGameTimeInfo();
+            let timeEl = document.getElementById('time-display');
+            let rushEl = document.getElementById('rush-badge');
+            let descEl = document.getElementById('commute-desc');
+            let clockWidget = document.getElementById('clock-widget');
+            if (timeEl) timeEl.innerText = `🕒 ${timeInfo.timeStr}`;
+            if (rushEl) {
+                rushEl.innerText = `${timeInfo.phaseIcon} ${timeInfo.phase}`;
+                rushEl.style.color = timeInfo.phaseColor;
+                rushEl.style.background = timeInfo.phaseBadgeBg;
+                rushEl.style.borderColor = timeInfo.phaseBorder;
+            }
+            if (descEl) descEl.innerText = timeInfo.flowDesc;
+            if (clockWidget) clockWidget.title = timeInfo.tooltip;
         }
 
         setInterval(() => {
@@ -923,20 +1009,30 @@
             let jobTargets = hubs.filter(h => !h.isSpawn && h.timer <= 0);
             if (spawns.length === 0 || jobTargets.length === 0) return;
 
-            let spawnBatchCount = spawnMultiplier;
+            let timeInfo = getGameTimeInfo();
+            let spawnBatchCount = Math.max(1, Math.round(spawnMultiplier * timeInfo.rushMultiplier));
+            let spawnedThisTick = new Set();
 
             for (let i = 0; i < spawnBatchCount; i++) {
-                let startTown = spawns[Math.floor(Math.random() * spawns.length)];
-                let targetJob = jobTargets[Math.floor(Math.random() * jobTargets.length)];
+                // Determine direction based on day/night rush cycles
+                let isToJob = Math.random() < timeInfo.toJobProbability;
+                let startOriginHub = isToJob ? spawns[Math.floor(Math.random() * spawns.length)] : jobTargets[Math.floor(Math.random() * jobTargets.length)];
+                let destinationHub = isToJob ? jobTargets[Math.floor(Math.random() * jobTargets.length)] : spawns[Math.floor(Math.random() * spawns.length)];
 
-                let startNode = nodes.find(n => n.x === startTown.x && n.y === startTown.y);
-                let endNode = nodes.find(n => n.x === targetJob.x && n.y === targetJob.y);
+                let startNode = nodes.find(n => n.x === startOriginHub.x && n.y === startOriginHub.y);
+                let endNode = nodes.find(n => n.x === destinationHub.x && n.y === destinationHub.y);
 
                 if (startNode && endNode && startNode !== endNode) {
                     let path = findPath(startNode, endNode);
                     if (path && path.length > 1) {
                         let edge = edges.find(e => (e.from === path[0] && e.to === path[1]) || (e.to === path[0] && e.from === path[1]));
                         let assignedLane = edge ? selectBestLane(path[0], path[1], edge) : 0;
+                        let spawnKey = `${startOriginHub.id}_${assignedLane}`;
+
+                        // Prevent multiple cars from attempting to spawn in the exact same lane in the same tick
+                        if (spawnedThisTick.has(spawnKey)) {
+                            continue;
+                        }
 
                         let dx0 = path[1].x - path[0].x;
                         let dy0 = path[1].y - path[0].y;
@@ -947,13 +1043,17 @@
                         let startX = path[0].x + (-dirY0 * laneOffset0);
                         let startY = path[0].y + (dirX0 * laneOffset0);
 
+                        // Only count as blocked if another car is stopped/crawling at the driveway (< 0.6 speed)
                         let isBlocked = cars.some(c => {
                             let sameSegment = (c.currentNode === path[0] && c.nextNode === path[1]);
-                            return sameSegment && c.lane === assignedLane && Math.hypot(c.x - startX, c.y - startY) < 26;
+                            return sameSegment && c.lane === assignedLane && Math.hypot(c.x - startX, c.y - startY) < 26 && c.speed < 0.6;
                         });
 
                         if (!isBlocked) {
-                            startTown.blockedCycles = 0;
+                            startOriginHub.blockedCycles = 0;
+                            spawnedThisTick.add(spawnKey);
+                            let initialSpeed = edge ? Math.min(1.4, ROAD_TYPES[edge.type].speedLimit * 0.7) : 1.2;
+
                             cars.push({
                                 x: startX,
                                 y: startY,
@@ -962,9 +1062,9 @@
                                 currentNode: path[0],
                                 nextNode: path[1],
                                 targetHubNode: endNode,
-                                speed: 0,
+                                speed: initialSpeed,
                                 lane: assignedLane,
-                                color: targetJob.color,
+                                color: isToJob ? destinationHub.color : startOriginHub.color,
                                 angle: Math.atan2(dy0, dx0),
                                 stopTimer: 0,
                                 stoppedAtStopSign: false,
@@ -974,25 +1074,27 @@
                                 roundaboutAngle: null
                             });
                         } else {
-                            startTown.jamFlash = 50;
-                            startTown.blockedCycles = (startTown.blockedCycles || 0) + 1;
-                            if (startTown.blockedCycles >= 2 && startTown.blockedCycles % 2 === 0) {
-                                budget -= 50;
-                                addFloatingText(startTown.x, startTown.y - 20, '-$50 EXIT JAMMED!', '#ff4757');
-                                updateUI();
+                            startOriginHub.blockedCycles = (startOriginHub.blockedCycles || 0) + 1;
+                            if (startOriginHub.blockedCycles >= 5) {
+                                startOriginHub.jamFlash = 50;
+                                if (startOriginHub.blockedCycles % 4 === 0) {
+                                    budget -= 50;
+                                    addFloatingText(startOriginHub.x, startOriginHub.y - 20, '-$50 EXIT JAMMED!', '#ff4757');
+                                    updateUI();
+                                }
                             }
                         }
                     } else {
-                        // Unconnected town penalty
-                        startTown.unconnectedCycles = (startTown.unconnectedCycles || 0) + 1;
-                        if (startTown.unconnectedCycles >= 4 && startTown.unconnectedCycles % 4 === 0) {
+                        // Unconnected origin penalty
+                        startOriginHub.unconnectedCycles = (startOriginHub.unconnectedCycles || 0) + 1;
+                        if (startOriginHub.unconnectedCycles >= 5 && startOriginHub.unconnectedCycles % 5 === 0) {
                             budget -= 50;
-                            addFloatingText(startTown.x, startTown.y - 20, '-$50 NO ROAD!', '#ff4757');
+                            addFloatingText(startOriginHub.x, startOriginHub.y - 20, '-$50 NO ROAD!', '#ff4757');
                             updateUI();
                         }
                         missingPathLines.push({
-                            x1: startTown.x, y1: startTown.y,
-                            x2: targetJob.x, y2: targetJob.y,
+                            x1: startOriginHub.x, y1: startOriginHub.y,
+                            x2: destinationHub.x, y2: destinationHub.y,
                             life: 90
                         });
                     }
@@ -1046,6 +1148,7 @@
         }
 
         function update() {
+            gameMinutes = (gameMinutes + 0.06) % 1440;
             edges.forEach(e => { e.congestion = Math.max(0, e.congestion - 0.03); });
             hubs.forEach(h => { if (h.jamFlash > 0) h.jamFlash--; });
 
@@ -1079,7 +1182,16 @@
                     let specs = getRoundaboutSpecs(rNode);
                     let laneRadius = specs.radius + 3 - (car.roundaboutLane * 7);
                     let maxCircleSpeed = 1.4;
-                    let destNode = car.roundaboutExitNode || car.nextNode;
+                    let destNode = car.roundaboutExitNode;
+                    if (!destNode || destNode === rNode) {
+                        if (car.path) {
+                            let nIdx = car.path.findIndex((n, idx) => idx > car.pathIdx && n !== rNode);
+                            if (nIdx !== -1) destNode = car.path[nIdx];
+                        }
+                        if (!destNode || destNode === rNode) {
+                            destNode = (car.nextNode && car.nextNode !== rNode) ? car.nextNode : car.targetHubNode;
+                        }
+                    }
 
                     let brakeInRoundabout = false;
                     let targetFollowSpeed = maxCircleSpeed;
@@ -1138,6 +1250,7 @@
                     // Physically accurate angular velocity v / r
                     let angularVelocity = car.speed / laneRadius;
                     car.roundaboutAngle -= angularVelocity;
+                    car.roundaboutLaps = (car.roundaboutLaps || 0) + (angularVelocity / (Math.PI * 2));
                     car.x = rNode.x + Math.cos(car.roundaboutAngle) * laneRadius;
                     car.y = rNode.y + Math.sin(car.roundaboutAngle) * laneRadius;
                     car.angle = car.roundaboutAngle - Math.PI / 2;
@@ -1154,7 +1267,10 @@
                         let exitBackoff = Math.sqrt(Math.max(0, laneRadius * laneRadius - outLaneOffset * outLaneOffset));
                         let exitPointX = rNode.x + (outDirX * exitBackoff) + (outRightNx * outLaneOffset);
                         let exitPointY = rNode.y + (outDirY * exitBackoff) + (outRightNy * outLaneOffset);
-                        let targetExitAngle = Math.atan2(exitPointY - rNode.y, exitPointX - rNode.x);
+                        
+                        let roadAngle = Math.atan2(outDy, outDx);
+                        // Geometric tangent angle for clockwise circulation leaving into outbound lane
+                        let targetExitAngle = roadAngle + Math.PI / 2;
 
                         let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
                         let normExitAngle = ((targetExitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -1165,19 +1281,20 @@
                         let exitBlocked = cars.some(other => {
                             if (other === car || other.inRoundabout) return false;
                             let onOutbound = (other.currentNode === rNode && other.nextNode === destNode && other.lane === car.lane);
-                            return onOutbound && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 16 && other.speed < 0.2;
+                            return onOutbound && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 18 && other.speed < 0.2;
                         });
 
-                        // Seamless exit onto outbound road once aligned (0.35 rad window)
-                        if (diff < 0.35 && !exitBlocked) {
+                        // Seamless exit onto outbound road once aligned (or after 1 full lap fail-safe)
+                        if ((diff < 0.45 || car.roundaboutLaps >= 1.0) && !exitBlocked) {
                             car.inRoundabout = false;
                             car.roundaboutAngle = null;
                             car.roundaboutCenter = null;
                             car.roundaboutExitNode = null;
+                            car.roundaboutLaps = 0;
                             car.stuckTimer = 0;
                             car.x = exitPointX;
                             car.y = exitPointY;
-                            car.angle = Math.atan2(outDy, outDx);
+                            car.angle = roadAngle;
                             car.currentNode = rNode;
                             car.nextNode = destNode;
                             let exitEdge = edges.find(e => (e.from === car.currentNode && e.to === car.nextNode) || (e.from === car.nextNode && e.to === car.currentNode));
@@ -1188,13 +1305,6 @@
                                 car.speed = Math.max(0.8, Math.min(car.speed, leadOutbound.speed));
                             } else {
                                 car.speed = Math.max(car.speed, 1.4);
-                            }
-
-                            if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
-                                cars.splice(i, 1);
-                                budget += 25;
-                                addFloatingText(car.x, car.y - 10, '+$25', '#2ecc71');
-                                updateUI();
                             }
                         }
                     }
@@ -1356,6 +1466,21 @@
                             car.speed = 0;
                             break;
                         }
+                        // Anti-blocking: Don't enter the intersection if the outbound lane ahead is jammed
+                        // (prevents gridlock by ensuring there is space to exit on the far side)
+                        let crossNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                        if (crossNextNode) {
+                            let outboundJammed = cars.some(oc => {
+                                if (oc === car) return false;
+                                let onOutbound = oc.currentNode === car.nextNode && oc.nextNode === crossNextNode && oc.lane === car.lane;
+                                return onOutbound && oc.speed < 0.3;
+                            });
+                            if (outboundJammed) {
+                                brakeForCar = true;
+                                car.speed = 0;
+                                break;
+                            }
+                        }
                     }
                     // Case 3: Outbound lane clearance
                     let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
@@ -1416,17 +1541,17 @@
             // Pulsing Emergency Warning Ripple for Jammed Buildings
             if (isJammed) {
                 let pulse = (Math.sin(Date.now() / 90) + 1) / 2;
-                let rippleRadius = 24 + pulse * 10;
-                ctx.strokeStyle = `rgba(255, 71, 87, ${0.4 + pulse * 0.55})`;
-                ctx.lineWidth = 3 + pulse * 2.5;
+                let rippleRadius = 16 + pulse * 6;
+                ctx.strokeStyle = `rgba(255, 71, 87, ${0.35 + pulse * 0.45})`;
+                ctx.lineWidth = 1.5 + pulse * 1.5;
                 ctx.beginPath();
                 ctx.arc(h.x, h.y, rippleRadius, 0, Math.PI * 2);
                 ctx.stroke();
 
                 ctx.fillStyle = '#ff4757';
-                ctx.font = 'bold 15px sans-serif';
+                ctx.font = 'bold 13px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText('⚠️', h.x, h.y - 42 - (pulse * 3));
+                ctx.fillText('⚠️', h.x, h.y - 34 - (pulse * 2));
             }
 
             // 1. Ambient Drop Shadow
@@ -1593,26 +1718,6 @@
                 ctx.fill();
             }
 
-            // 3. Floating Identity Pill (Top)
-            let labelText = h.isSpawn ? `🏡 Town #${hubNum}` : `🏢 Job #${hubNum}`;
-            ctx.font = 'bold 10px sans-serif';
-            let textWidth = ctx.measureText(labelText).width;
-            let pillW = Math.max(76, textWidth + 14);
-            let pillH = 17;
-            let pillY = h.y - 35;
-
-            ctx.fillStyle = 'rgba(15, 20, 25, 0.92)';
-            ctx.beginPath();
-            ctx.roundRect(h.x - pillW / 2, pillY, pillW, pillH, 8);
-            ctx.fill();
-            ctx.strokeStyle = h.isSpawn ? '#e74c3c' : (h.color || '#3498db');
-            ctx.lineWidth = 1.3;
-            ctx.stroke();
-
-            ctx.fillStyle = '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.fillText(labelText, h.x, pillY + 12);
-
             // 4. Floating Status Tag (Bottom)
             if (isJammed) {
                 let pulse = (Math.sin(Date.now() / 90) + 1) / 2;
@@ -1629,7 +1734,9 @@
                 ctx.font = 'bold 9.5px sans-serif';
                 ctx.fillText('⚠️ EXIT JAMMED (-$50)', h.x, statusY + 12.5);
             } else if (h.timer > 0) {
-                let timerW = 86;
+                let timerText = `⏳ Opens in ${h.timer}s`;
+                ctx.font = 'bold 9px sans-serif';
+                let timerW = Math.max(80, ctx.measureText(timerText).width + 16);
                 let timerY = h.y + 26;
                 ctx.fillStyle = 'rgba(20, 24, 28, 0.92)';
                 ctx.beginPath();
@@ -1639,8 +1746,8 @@
                 ctx.lineWidth = 1;
                 ctx.stroke();
                 ctx.fillStyle = '#f1c40f';
-                ctx.font = 'bold 9px sans-serif';
-                ctx.fillText(`⏳ Opens in ${h.timer}s`, h.x, timerY + 11.5);
+                ctx.textAlign = 'center';
+                ctx.fillText(timerText, h.x, timerY + 11.5);
             } else {
                 let statusW = connected ? 76 : 88;
                 let statusY = h.y + 26;
@@ -1743,35 +1850,71 @@
                     let nx = dy / len;
                     let ny = -dx / len;
 
-                    // Heatmap: Close-hugging gradual ambient glow along the road edges
-                    if (showHeatmap && e.congestion > 5) {
+                    // Heatmap: Multi-layer gradient glow along road edges
+                    if (showHeatmap && e.congestion > 3) {
                         ctx.save();
                         let congRatio = Math.min(1.0, e.congestion / 100);
-                        let hue = Math.max(0, 120 - (congRatio * 130)); // 120 (green) -> 60 (yellow) -> 0 (crimson red)
-                        let baseAlpha = 0.25 + (congRatio * 0.65);
-                        let shoulderOffset = (style.width / 2) - 1;
+                        // Rich 5-stop color ramp: green -> lime -> yellow -> orange -> red
+                        let r, g, b;
+                        if (congRatio < 0.25) {
+                            let t = congRatio / 0.25;
+                            r = Math.round(30 + t * 195); g = 220; b = 30;
+                        } else if (congRatio < 0.5) {
+                            let t = (congRatio - 0.25) / 0.25;
+                            r = Math.round(225 + t * 30); g = Math.round(220 - t * 80); b = 0;
+                        } else if (congRatio < 0.75) {
+                            let t = (congRatio - 0.5) / 0.25;
+                            r = 255; g = Math.round(140 - t * 100); b = 0;
+                        } else {
+                            let t = (congRatio - 0.75) / 0.25;
+                            r = 255; g = Math.round(40 - t * 40); b = Math.round(t * 30);
+                        }
+                        let color = `rgb(${r},${g},${b})`;
+                        let baseAlpha = 0.18 + (congRatio * 0.72);
+                        let roadHalfW = style.width / 2;
 
-                        // Soft gradual outer blend
-                        ctx.strokeStyle = `hsla(${hue}, 85%, 55%, ${baseAlpha * 0.4})`;
-                        ctx.lineWidth = 6;
+                        // Layer 1: Wide ambient outer glow (full road width)
+                        ctx.globalCompositeOperation = 'screen';
+                        let gradOuter = ctx.createLinearGradient(
+                            e.from.x - nx * roadHalfW, e.from.y - ny * roadHalfW,
+                            e.from.x + nx * roadHalfW, e.from.y + ny * roadHalfW
+                        );
+                        gradOuter.addColorStop(0, `rgba(${r},${g},${b},0)`);
+                        gradOuter.addColorStop(0.25, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
+                        gradOuter.addColorStop(0.5, `rgba(${r},${g},${b},${baseAlpha * 0.40})`);
+                        gradOuter.addColorStop(0.75, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
+                        gradOuter.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                        ctx.strokeStyle = gradOuter;
+                        ctx.lineWidth = style.width - 2;
                         ctx.lineCap = 'round';
                         ctx.beginPath();
-                        ctx.moveTo(e.from.x - nx * shoulderOffset, e.from.y - ny * shoulderOffset);
-                        ctx.lineTo(e.to.x - nx * shoulderOffset, e.to.y - ny * shoulderOffset);
-                        ctx.moveTo(e.from.x + nx * shoulderOffset, e.from.y + ny * shoulderOffset);
-                        ctx.lineTo(e.to.x + nx * shoulderOffset, e.to.y + ny * shoulderOffset);
+                        ctx.moveTo(e.from.x, e.from.y);
+                        ctx.lineTo(e.to.x, e.to.y);
                         ctx.stroke();
 
-                        // Crisp inner curb highlight
-                        ctx.strokeStyle = `hsla(${hue}, 90%, 55%, ${baseAlpha})`;
-                        ctx.lineWidth = 2;
+                        // Layer 2: Medium shoulder strips along both curbs
+                        ctx.globalCompositeOperation = 'source-over';
+                        let shoulderOff = roadHalfW - 2;
+                        ctx.strokeStyle = `rgba(${r},${g},${b},${baseAlpha * 0.45})`;
+                        ctx.lineWidth = 4;
                         ctx.beginPath();
-                        ctx.moveTo(e.from.x - nx * shoulderOffset, e.from.y - ny * shoulderOffset);
-                        ctx.lineTo(e.to.x - nx * shoulderOffset, e.to.y - ny * shoulderOffset);
-                        ctx.moveTo(e.from.x + nx * shoulderOffset, e.from.y + ny * shoulderOffset);
-                        ctx.lineTo(e.to.x + nx * shoulderOffset, e.to.y + ny * shoulderOffset);
+                        ctx.moveTo(e.from.x - nx * shoulderOff, e.from.y - ny * shoulderOff);
+                        ctx.lineTo(e.to.x - nx * shoulderOff, e.to.y - ny * shoulderOff);
+                        ctx.moveTo(e.from.x + nx * shoulderOff, e.from.y + ny * shoulderOff);
+                        ctx.lineTo(e.to.x + nx * shoulderOff, e.to.y + ny * shoulderOff);
                         ctx.stroke();
 
+                        // Layer 3: Crisp bright inner curb line
+                        ctx.strokeStyle = `rgba(${r},${g},${b},${baseAlpha * 0.65})`;
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(e.from.x - nx * shoulderOff, e.from.y - ny * shoulderOff);
+                        ctx.lineTo(e.to.x - nx * shoulderOff, e.to.y - ny * shoulderOff);
+                        ctx.moveTo(e.from.x + nx * shoulderOff, e.from.y + ny * shoulderOff);
+                        ctx.lineTo(e.to.x + nx * shoulderOff, e.to.y + ny * shoulderOff);
+                        ctx.stroke();
+
+                        ctx.globalCompositeOperation = 'source-over';
                         ctx.restore();
                     }
 
@@ -1890,15 +2033,54 @@
                 drawHub(ctx, h, connected);
             });
 
+            let timeInfo = getGameTimeInfo();
+            let isNight = (timeInfo.hours24 < 6 || timeInfo.hours24 >= 20);
+            let isDusk = (timeInfo.hours24 >= 17 && timeInfo.hours24 < 20);
+
             cars.forEach(c => {
                 ctx.save();
                 ctx.translate(c.x, c.y);
                 ctx.rotate(c.angle || 0);
+
+                // Car Headlight beams shining at night/dusk
+                if (isNight || isDusk) {
+                    let beamGrad = ctx.createRadialGradient(6, 0, 1, 24, 0, 18);
+                    beamGrad.addColorStop(0, 'rgba(255, 245, 170, 0.45)');
+                    beamGrad.addColorStop(1, 'rgba(255, 245, 170, 0)');
+                    ctx.fillStyle = beamGrad;
+                    ctx.beginPath();
+                    ctx.moveTo(6, -3);
+                    ctx.lineTo(26, -10);
+                    ctx.lineTo(26, 10);
+                    ctx.lineTo(6, 3);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+
+                // Car Body & Windshield
                 ctx.fillStyle = c.color;
                 ctx.fillRect(-6, -3, 12, 6);
-                ctx.fillStyle = '#fff'; ctx.fillRect(5, -2, 2, 1); ctx.fillRect(5, 1, 2, 1);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(5, -2.5, 2, 1.2);
+                ctx.fillRect(5, 1.3, 2, 1.2);
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(-1, -2.5, 4, 5); // roof glass
+
                 ctx.restore();
             });
+
+            // Ambient Day / Dusk / Night Environmental Lighting Tint
+            if (isNight) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(10, 18, 36, 0.22)';
+                ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+                ctx.restore();
+            } else if (isDusk) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(230, 126, 34, 0.08)';
+                ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+                ctx.restore();
+            }
 
             floatingTexts.forEach(ft => {
                 ctx.save();
