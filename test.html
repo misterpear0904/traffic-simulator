@@ -2056,13 +2056,25 @@
 
                 // Intersection approach turn-lane enforcement:
                 // Only switch if the vehicle's current lane is illegal for its upcoming turn,
-                // AND the car isn't already engaged in stop/signal protocol.
+                // the car isn't already engaged in stop/signal protocol,
+                // AND the target lane is physically clear (prevents swap-deadlocks).
                 if (roadStyle.lanesPerDir > 1 && distToTargetNode < 120 && !car.turnPath &&
                     !car.stoppedAtStopSign && !car.crossingIntersection && car.stopTimer === 0) {
                     let afterNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
                     let allowed = getAllowedLanes(car.currentNode, car.nextNode, edge, afterNode);
                     if (!allowed.includes(car.lane)) {
-                        car.lane = allowed[0];
+                        let targetLane = allowed[0];
+                        // Only switch if target lane is clear — avoids swap-deadlocks where
+                        // two cars in adjacent lanes try to cross into each other simultaneously
+                        let targetLaneClear = !cars.some(other => {
+                            if (other === car) return false;
+                            if (other.currentNode !== car.currentNode || other.nextNode !== car.nextNode) return false;
+                            if (other.lane !== targetLane) return false;
+                            return Math.hypot(other.x - car.x, other.y - car.y) < 30;
+                        });
+                        if (targetLaneClear) {
+                            car.lane = targetLane;
+                        }
                     }
                 }
 
