@@ -70,6 +70,8 @@
         <div class="stat-item">Budget: <span id="budget-val" class="stat-val">$5,000</span></div>
         <div class="stat-item">Road Upkeep: <span id="upkeep-val" style="color:#e67e22">-$0 / 10s</span></div>
         <div class="stat-item">Active Traffic: <span id="cars-val" style="color:#f1c40f">0</span></div>
+        <div class="stat-item">✅ Completed: <span id="completed-val" style="color:#2ecc71">0</span></div>
+        <div class="stat-item">❌ Failed: <span id="failed-val" style="color:#e74c3c">0</span></div>
         <div class="stat-item">🏡 Towns: <span id="towns-val" style="color:#e74c3c">0</span></div>
         <div class="stat-item">🏢 Jobs: <span id="jobs-val" style="color:#00a8ff">0</span></div>
         <div class="traffic-slider-wrap">
@@ -144,6 +146,8 @@
         let nextHubTimer = 0;
         let upkeepTimer = 0;
         let showHeatmap = false;
+        let completedTrips = 0;
+        let failedTrips = 0;
         let gameMinutes = 7 * 60; // Start at 7:00 AM
 
         function getGameTimeInfo() {
@@ -669,6 +673,8 @@
             edges = [];
             hubs = [];
             cars = [];
+            completedTrips = 0;
+            failedTrips = 0;
             floatingTexts = [];
             missingPathLines = [];
 
@@ -972,6 +978,11 @@
             if (townsEl) townsEl.innerText = townCount;
             if (jobsEl) jobsEl.innerText = jobCount;
 
+            let completedEl = document.getElementById('completed-val');
+            let failedEl = document.getElementById('failed-val');
+            if (completedEl) completedEl.innerText = completedTrips.toLocaleString();
+            if (failedEl) failedEl.innerText = failedTrips.toLocaleString();
+
             let roadUpkeep = edges.reduce((sum, e) => sum + (ROAD_TYPES[e.type]?.upkeep || 0), 0);
             let intersectionUpkeep = nodes.filter(n => n.type === 'signal' || n.type === 'roundabout').length * 5;
             let totalUpkeep = roadUpkeep + intersectionUpkeep;
@@ -1031,12 +1042,14 @@
                     if (path && path.length > 1) {
                         let edge = edges.find(e => (e.from === path[0] && e.to === path[1]) || (e.to === path[0] && e.from === path[1]));
                         let assignedLane = edge ? selectBestLane(path[0], path[1], edge) : 0;
-                        let spawnKey = `${startOriginHub.id}_${assignedLane}`;
+                        // One car per hub per tick — prevents burst-spawning from the same building
+                        let spawnKey = `${startOriginHub.id}`;
 
                         // Prevent multiple cars from attempting to spawn in the exact same lane in the same tick
                         if (spawnedThisTick.has(spawnKey)) {
                             continue;
                         }
+
 
                         let dx0 = path[1].x - path[0].x;
                         let dy0 = path[1].y - path[0].y;
@@ -1066,6 +1079,7 @@
                                 currentNode: path[0],
                                 nextNode: path[1],
                                 targetHubNode: endNode,
+                                originHubId: startOriginHub.id,
                                 speed: initialSpeed,
                                 lane: assignedLane,
                                 color: destinationHub.color,
@@ -1078,6 +1092,7 @@
                                 roundaboutAngle: null
                             });
                         } else {
+                            failedTrips++;
                             startOriginHub.blockedCycles = (startOriginHub.blockedCycles || 0) + 1;
                             if (startOriginHub.blockedCycles >= 5) {
                                 startOriginHub.jamFlash = 50;
@@ -1090,6 +1105,7 @@
                         }
                     } else {
                         // Unconnected origin penalty
+                        failedTrips++;
                         startOriginHub.unconnectedCycles = (startOriginHub.unconnectedCycles || 0) + 1;
                         if (startOriginHub.unconnectedCycles >= 5 && startOriginHub.unconnectedCycles % 5 === 0) {
                             budget -= 50;
@@ -1186,14 +1202,23 @@
                     let specs = getRoundaboutSpecs(rNode);
                     let laneRadius = specs.radius + 3 - (car.roundaboutLane * 7);
                     let maxCircleSpeed = 1.4;
+
+                    // Resolve exit destination: prefer the stored exitNode, then scan path, then nextNode
                     let destNode = car.roundaboutExitNode;
                     if (!destNode || destNode === rNode) {
                         if (car.path) {
-                            let nIdx = car.path.findIndex((n, idx) => idx > car.pathIdx && n !== rNode);
-                            if (nIdx !== -1) destNode = car.path[nIdx];
+                            // pathIdx was already incremented on entry — look from pathIdx onward
+                            for (let pi = car.pathIdx; pi < car.path.length; pi++) {
+                                if (car.path[pi] !== rNode) { destNode = car.path[pi]; break; }
+                            }
                         }
                         if (!destNode || destNode === rNode) {
-                            destNode = (car.nextNode && car.nextNode !== rNode) ? car.nextNode : car.targetHubNode;
+                            // Last resort: find any neighbour of rNode that has an edge to it
+                            let adj = edges
+                                .filter(e => e.from === rNode || e.to === rNode)
+                                .map(e => e.from === rNode ? e.to : e.from)
+                                .filter(n => n !== rNode);
+                            destNode = adj[0] || null;
                         }
                     }
 
@@ -1281,14 +1306,17 @@
                         let diff = Math.abs(normCarAngle - normExitAngle);
                         if (diff > Math.PI) diff = 2 * Math.PI - diff;
 
-                        // Don't exit if a stopped car is sitting right at the exit mouth
+                        // Don't exit if a car is fully stopped right at the exit mouth
                         let exitBlocked = cars.some(other => {
                             if (other === car || other.inRoundabout) return false;
-                            return other.speed < 0.15 && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 20;
+                            return other.speed < 0.05 && Math.hypot(other.x - exitPointX, other.y - exitPointY) < 14;
                         });
 
-                        // Exit when within 0.5 rad of exit point, or after 0.9 laps (hard failsafe)
-                        if ((diff < 0.5 || car.roundaboutLaps >= 0.9) && !exitBlocked) {
+                        // Hard failsafe: always exit after 0.9 laps regardless of exit blocking
+                        let forceExit = car.roundaboutLaps >= 0.9;
+
+                        // Exit when within 0.5 rad of exit point, or force after 0.9 laps
+                        if ((diff < 0.5 && !exitBlocked) || forceExit) {
                             car.inRoundabout = false;
                             car.roundaboutAngle = null;
                             car.roundaboutCenter = null;
@@ -1383,8 +1411,9 @@
                         if (distToTargetNode <= stopLineDist + 3) {
                             car.speed = 0;
                             car.stopTimer++;
-                            if (car.stopTimer > 20) {
+                            if (car.stopTimer > 12) {
                                 car.stoppedAtStopSign = true;
+                                car.waitTimer = 0;
                                 stopRequired = false;
                             }
                         } else {
@@ -1416,6 +1445,52 @@
                     }
                 }
 
+                // ── Stop-sign token-based priority ────────────────────────────────
+                // Once a car has fully stopped (stoppedAtStopSign=true) it competes
+                // for the intersection's crossing token (node.crossingCar).
+                // Only the token-holder may proceed; all others queue.
+                // A waitTimer failsafe forces a stalled car through after 120 frames.
+                if (car.nextNode.type === 'stopsign' && car.stoppedAtStopSign && !car.crossingIntersection) {
+                    let snode = car.nextNode;
+                    // Release stale token if that car is gone or has moved on
+                    if (snode.crossingCar && snode.crossingCar !== car) {
+                        let holder = snode.crossingCar;
+                        let holderGone = !cars.includes(holder) ||
+                            holder.currentNode === snode ||
+                            holder.nextNode !== snode;
+                        if (holderGone) snode.crossingCar = null;
+                    }
+
+                    // Try to claim the token
+                    if (!snode.crossingCar) {
+                        // Find the car at this stop sign with the highest stopTimer (longest wait)
+                        let bestCar = car;
+                        for (let k = 0; k < cars.length; k++) {
+                            let other = cars[k];
+                            if (other === car) continue;
+                            if (other.nextNode === snode && other.stoppedAtStopSign && !other.crossingIntersection) {
+                                if (other.stopTimer > bestCar.stopTimer ||
+                                    (other.stopTimer === bestCar.stopTimer && k < cars.indexOf(car))) {
+                                    bestCar = other;
+                                }
+                            }
+                        }
+                        if (bestCar === car) {
+                            snode.crossingCar = car; // Claim token
+                        }
+                    }
+
+                    // Increment waitTimer while stopped-and-ready; failsafe after 120 frames
+                    car.waitTimer = (car.waitTimer || 0) + 1;
+                    if (snode.crossingCar !== car && car.waitTimer < 120) {
+                        stopRequired = true;
+                        car.speed = 0;
+                    } else if (car.waitTimer >= 120) {
+                        // Deadlock failsafe: force token claim and proceed
+                        snode.crossingCar = car;
+                    }
+                }
+
                 // Vehicle-to-vehicle braking and queuing check
                 let brakeForCar = false;
                 let minFollowGap = 20;
@@ -1443,43 +1518,6 @@
                                 }
                             }
                         }
-                    } 
-                    // Case 2: At stop sign intersection — check priority once stopped and ready to cross
-                    else if (car.nextNode.type === 'stopsign' && car.stoppedAtStopSign && !car.crossingIntersection && distToTargetNode <= 22) {
-                        // Check other cars stopped at the same stop sign with priority
-                        if (other.nextNode === car.nextNode) {
-                            let otherDist = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
-                            let otherHasPriority = other.stoppedAtStopSign &&
-                                (other.stopTimer > car.stopTimer || (other.stopTimer === car.stopTimer && j < i));
-                            if (otherHasPriority && otherDist < 24) {
-                                brakeForCar = true;
-                                car.speed = 0;
-                                break;
-                            }
-                        }
-                        // Block if ANY car is physically inside the intersection box
-                        let otherDistToNode = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
-                        if (otherDistToNode < 12) {
-                            brakeForCar = true;
-                            car.speed = 0;
-                            break;
-                        }
-                        // Anti box-blocking: check if a car is stuck in the exit mouth (within ~20px of node, slow)
-                        let crossNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
-                        if (crossNextNode) {
-                            // The exit mouth is just beyond the stopsign node toward crossNextNode
-                            let mouthDx = crossNextNode.x - car.nextNode.x;
-                            let mouthDy = crossNextNode.y - car.nextNode.y;
-                            let mouthLen = Math.hypot(mouthDx, mouthDy) || 1;
-                            let exitMouthX = car.nextNode.x + (mouthDx / mouthLen) * 18;
-                            let exitMouthY = car.nextNode.y + (mouthDy / mouthLen) * 18;
-                            if (!other.inRoundabout && other.speed < 0.1 &&
-                                Math.hypot(other.x - exitMouthX, other.y - exitMouthY) < 18) {
-                                brakeForCar = true;
-                                car.speed = 0;
-                                break;
-                            }
-                        }
                     }
                     // Case 3: Outbound lane clearance
                     let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
@@ -1495,7 +1533,7 @@
 
                 if (!stopRequired && !brakeForCar) {
                     car.speed = Math.min(roadStyle.speedLimit, car.speed + 0.08);
-                    if (car.stoppedAtStopSign) {
+                    if (car.stoppedAtStopSign && !car.crossingIntersection) {
                         car.crossingIntersection = true;
                     }
                 }
@@ -1505,6 +1543,7 @@
                     car.pathIdx++;
                     if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
                         cars.splice(i, 1);
+                        completedTrips++;
                         budget += 25;
                         addFloatingText(car.x, car.y - 10, '+$25', '#2ecc71');
                         updateUI();
@@ -1517,9 +1556,14 @@
                                 car.lane = selectBestLane(car.currentNode, car.nextNode, nextEdge);
                             }
                         }
+                        // Release stop-sign crossing token when car advances past node
+                        if (car.currentNode.crossingCar === car) {
+                            car.currentNode.crossingCar = null;
+                        }
                         car.stoppedAtStopSign = false;
                         car.crossingIntersection = false;
                         car.stopTimer = 0;
+                        car.waitTimer = 0;
                     }
                 } else if (car.speed > 0) {
                     let moveX = (targetX - car.x) / (distToTarget || 1);
