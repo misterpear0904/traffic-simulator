@@ -55,6 +55,22 @@
         }
         .zoom-btn:hover { background: #00a8ff; border-color: #0097e6; }
         #zoom-level { font-size: 12.5px; font-weight: 700; color: #00a8ff; padding: 2px 0; }
+
+        #road-inspector {
+            position: absolute; top: 80px; left: 24px;
+            width: 330px; max-height: calc(100vh - 180px);
+            background: rgba(16, 20, 25, 0.96); padding: 18px; border-radius: 18px;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.12);
+            backdrop-filter: blur(16px);
+            z-index: 15; display: none; overflow-y: auto; color: #fff;
+            animation: inspectFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #road-inspector::-webkit-scrollbar { width: 6px; }
+        #road-inspector::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+        @keyframes inspectFadeIn {
+            from { opacity: 0; transform: translateY(-10px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -113,10 +129,80 @@
             🔥 Heatmap Mode
             <span class="cost" id="heat-status">OFF</span>
         </button>
+        <button class="btn" id="btn-inspect" onclick="setTool('inspect')">
+            🔍 Inspect Corridor
+            <span class="cost">Drag 2 Segments</span>
+        </button>
         <button class="btn" id="btn-delete" onclick="setTool('delete')">
             🗑️ Demolish
             <span class="cost">+$20 refund</span>
         </button>
+    </div>
+
+    <!-- Floating Road Corridor Destinations Inspector Panel -->
+    <div id="road-inspector">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span id="inspect-icon" style="font-size: 24px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));">🧭</span>
+                <div>
+                    <div id="inspect-title" style="font-weight: 700; font-size: 15px; color: #fff; line-height: 1.2;">Directed 2-Segment Corridor</div>
+                    <div id="inspect-sub" style="font-size: 11px; color: #00d2d3; font-weight: 600; margin-top: 2px;">Node 1 ➔ Node 2 ➔ Node 3</div>
+                </div>
+            </div>
+            <button onclick="closeInspector()" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #dcdde1; font-size: 14px; cursor: pointer; width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.15s;" onmouseover="this.style.background='rgba(231,76,60,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'" title="Close Inspector">✕</button>
+        </div>
+
+        <!-- Quick Stats Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Direction</div>
+                <div id="inspect-direction" style="font-weight: 700; font-size: 13px; color: #00a8ff; margin-top: 2px;">➡️ Eastbound</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">On Segments Now</div>
+                <div id="inspect-current-cars" style="font-weight: 700; font-size: 13.5px; color: #2ecc71; margin-top: 2px;">0 cars</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Segment 1</div>
+                <div id="inspect-seg1" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">Local</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Segment 2</div>
+                <div id="inspect-seg2" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">Avenue</div>
+            </div>
+        </div>
+
+        <!-- Live Cars on Segments Section -->
+        <div style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-size: 11.5px; font-weight: 700; color: #2ecc71; text-transform: uppercase; letter-spacing: 0.6px;">🚗 Cars Currently On These 2 Segments</span>
+                <span id="inspect-cars-count-badge" style="font-size: 11px; color: #2ecc71; font-weight: 700; background: rgba(46,204,113,0.15); padding: 2px 7px; border-radius: 4px;">0 cars</span>
+            </div>
+            <div id="inspect-cars-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; padding-right: 2px;">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+
+        <!-- Destinations Section -->
+        <div style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-size: 11.5px; font-weight: 700; color: #f5cd79; text-transform: uppercase; letter-spacing: 0.6px;">🎯 Destination Breakdown</span>
+                <span id="inspect-dest-count" style="font-size: 11px; color: #747d8c; font-weight: 600;">0 targets</span>
+            </div>
+            <div id="inspect-destinations-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; padding-right: 2px;">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+
+        <!-- Commuter Routes Section -->
+        <div>
+            <div style="font-size: 11.5px; font-weight: 700; color: #3498db; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">
+                🔄 Commuter Routes Passing This Way
+            </div>
+            <div id="inspect-flows-list" style="display: flex; flex-direction: column; gap: 5px; max-height: 110px; overflow-y: auto; padding-right: 2px;">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
     </div>
 
     <div id="zoom-controls">
@@ -141,6 +227,7 @@
         let floatingTexts = [];
         let missingPathLines = [];
         let dragStartNode = null;
+        let selectedCorridor = null;
         let mousePos = { x: 0, y: 0 };
         let spawnMultiplier = 5;
         let nextHubTimer = 0;
@@ -677,6 +764,8 @@
             failedTrips = 0;
             floatingTexts = [];
             missingPathLines = [];
+            selectedCorridor = null;
+            closeInspector();
 
             camera.x = WORLD_WIDTH / 2;
             camera.y = WORLD_HEIGHT / 2;
@@ -753,6 +842,237 @@
             status.innerText = showHeatmap ? 'ON' : 'OFF';
         }
 
+        function selectCorridor(node1, node2, node3, edge1, edge2) {
+            let dx = node3.x - node1.x;
+            let dy = node3.y - node1.y;
+            let dirName = '➡️ Eastbound';
+            if (dx < 0) dirName = '⬅️ Westbound';
+            else if (dy > 0) dirName = '⬇️ Southbound';
+            else if (dy < 0) dirName = '⬆️ Northbound';
+
+            selectedCorridor = {
+                node1, node2, node3, edge1, edge2, dirName
+            };
+            updateInspector();
+        }
+
+        function closeInspector() {
+            selectedCorridor = null;
+            let panel = document.getElementById('road-inspector');
+            if (panel) panel.style.display = 'none';
+        }
+
+        function getCorridorData(corridor) {
+            if (!corridor) return { currentCars: [], routedCars: [], destinations: [], flows: [] };
+            let { node1, node2, node3, edge1, edge2 } = corridor;
+
+            // 1. Current cars physically driving on segment 1 or 2 in that specific direction:
+            let currentCars = cars.filter(c => {
+                let onSeg1Forward = (c.currentNode === node1 && c.nextNode === node2);
+                let onSeg2Forward = (c.currentNode === node2 && c.nextNode === node3);
+                return onSeg1Forward || onSeg2Forward;
+            });
+
+            // 2. All active cars whose upcoming route passes through this directed corridor:
+            let routedCars = cars.filter(c => {
+                if (!c.path) return false;
+                for (let i = c.pathIdx; i < c.path.length - 1; i++) {
+                    if (c.path[i] === node1 && c.path[i + 1] === node2) return true;
+                    if (c.path[i] === node2 && c.path[i + 1] === node3) return true;
+                }
+                return false;
+            });
+
+            // 3. Group by destination hub
+            let destMap = new Map();
+            let carsForDest = currentCars.length > 0 ? currentCars : routedCars;
+
+            carsForDest.forEach(c => {
+                let hub = hubs.find(h => (c.targetHubNode && h.x === c.targetHubNode.x && h.y === c.targetHubNode.y) || h.id === c.targetHubId);
+                let destId = hub ? hub.id : (c.targetHubNode ? `${c.targetHubNode.x}_${c.targetHubNode.y}` : 'unknown');
+                let destName = hub ? hub.name : (c.targetHubName || 'Destination Hub');
+                let destColor = hub ? hub.color : (c.targetHubColor || c.color || '#fff');
+                let isTown = hub ? hub.isSpawn : false;
+
+                if (!destMap.has(destId)) {
+                    destMap.set(destId, {
+                        id: destId,
+                        hub: hub,
+                        name: destName,
+                        color: destColor,
+                        isTown: isTown,
+                        count: 0
+                    });
+                }
+                destMap.get(destId).count++;
+            });
+
+            let destList = Array.from(destMap.values()).sort((a, b) => b.count - a.count);
+
+            // 4. Commuter flows heading this way
+            let flows = [];
+            let allSpawns = hubs.filter(h => h.isSpawn);
+            let allJobs = hubs.filter(h => !h.isSpawn);
+            let testPairs = [];
+            allSpawns.forEach(s => allJobs.forEach(j => testPairs.push({ from: s, to: j })));
+            allJobs.forEach(j => allSpawns.forEach(s => testPairs.push({ from: j, to: s })));
+
+            testPairs.forEach(pair => {
+                let sNode = nodes.find(n => n.x === pair.from.x && n.y === pair.from.y);
+                let tNode = nodes.find(n => n.x === pair.to.x && n.y === pair.to.y);
+                if (sNode && tNode) {
+                    let path = findPath(sNode, tNode);
+                    if (path) {
+                        for (let p = 0; p < path.length - 1; p++) {
+                            let usesSeg1 = (path[p] === node1 && path[p + 1] === node2);
+                            let usesSeg2 = (path[p] === node2 && path[p + 1] === node3);
+                            if (usesSeg1 || usesSeg2) {
+                                flows.push({
+                                    fromName: pair.from.name,
+                                    fromColor: pair.from.color,
+                                    toName: pair.to.name,
+                                    toColor: pair.to.color
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+
+            return { currentCars, routedCars, destinations: destList, flows };
+        }
+
+        function updateInspector() {
+            let panel = document.getElementById('road-inspector');
+            if (!panel) return;
+            if (!selectedCorridor) {
+                panel.style.display = 'none';
+                return;
+            }
+
+            let { node1, node2, node3, edge1, edge2, dirName } = selectedCorridor;
+            // Check if at least one edge exists
+            let liveEdge1 = edges.find(e => (e.from === node1 && e.to === node2) || (e.from === node2 && e.to === node1));
+            let liveEdge2 = edges.find(e => (e.from === node2 && e.to === node3) || (e.from === node3 && e.to === node2));
+            if (!liveEdge1 && !liveEdge2) {
+                closeInspector();
+                return;
+            }
+
+            selectedCorridor.edge1 = liveEdge1;
+            selectedCorridor.edge2 = liveEdge2;
+
+            panel.style.display = 'block';
+
+            let iconEl = document.getElementById('inspect-icon');
+            let titleEl = document.getElementById('inspect-title');
+            let subEl = document.getElementById('inspect-sub');
+            let dirEl = document.getElementById('inspect-direction');
+            let currentCarsEl = document.getElementById('inspect-current-cars');
+            let carsBadgeEl = document.getElementById('inspect-cars-count-badge');
+            let seg1El = document.getElementById('inspect-seg1');
+            let seg2El = document.getElementById('inspect-seg2');
+            let destCountEl = document.getElementById('inspect-dest-count');
+            let carsListEl = document.getElementById('inspect-cars-list');
+            let destListEl = document.getElementById('inspect-destinations-list');
+            let flowsListEl = document.getElementById('inspect-flows-list');
+
+            let type1 = liveEdge1 ? (liveEdge1.type.charAt(0).toUpperCase() + liveEdge1.type.slice(1)) : 'No Road';
+            let type2 = liveEdge2 ? (liveEdge2.type.charAt(0).toUpperCase() + liveEdge2.type.slice(1)) : 'No Road';
+
+            if (titleEl) titleEl.innerText = `Corridor: ${dirName}`;
+            if (subEl) subEl.innerText = `(${node1.x},${node1.y}) ➔ (${node2.x},${node2.y}) ➔ (${node3.x},${node3.y})`;
+            if (dirEl) dirEl.innerText = dirName;
+            if (seg1El) seg1El.innerText = type1;
+            if (seg2El) seg2El.innerText = type2;
+
+            let data = getCorridorData(selectedCorridor);
+            if (currentCarsEl) currentCarsEl.innerText = `${data.currentCars.length} on road`;
+            if (carsBadgeEl) carsBadgeEl.innerText = `${data.currentCars.length} active`;
+            if (destCountEl) destCountEl.innerText = `${data.destinations.length} target${data.destinations.length !== 1 ? 's' : ''}`;
+
+            // 1. Cars currently on the two segments
+            if (carsListEl) {
+                if (data.currentCars.length === 0) {
+                    carsListEl.innerHTML = `
+                        <div style="font-size: 11.5px; color: #a4b0be; background: rgba(255,255,255,0.04); padding: 10px; border-radius: 8px; text-align: center;">
+                            No cars currently driving on these 2 segments in this direction.
+                        </div>`;
+                } else {
+                    carsListEl.innerHTML = data.currentCars.map(c => {
+                        let segLabel = (c.currentNode === node1 && c.nextNode === node2) ? 'Seg 1 (①➔②)' : 'Seg 2 (②➔③)';
+                        let targetHub = hubs.find(h => (c.targetHubNode && h.x === c.targetHubNode.x && h.y === c.targetHubNode.y) || h.id === c.targetHubId);
+                        let destLabel = targetHub ? targetHub.name : (c.targetHubName || 'Destination');
+                        let destColor = targetHub ? targetHub.color : (c.color || '#f1c40f');
+                        return `
+                            <div style="background: rgba(255,255,255,0.06); padding: 7px 10px; border-radius: 8px; border-left: 4px solid ${destColor}; display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <div style="font-size: 12px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
+                                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${c.color};"></span>
+                                        <span>${segLabel}</span>
+                                    </div>
+                                    <div style="font-size: 10.5px; color: #95a5a6;">Lane ${c.lane + 1} • Speed ${c.speed.toFixed(1)}</div>
+                                </div>
+                                <div style="font-size: 11.5px; font-weight: 700; color: ${destColor}; background: rgba(0,0,0,0.3); padding: 3px 7px; border-radius: 6px;">
+                                    🎯 ${destLabel}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+
+            // 2. Destinations breakdown
+            if (destListEl) {
+                if (data.destinations.length === 0) {
+                    destListEl.innerHTML = `
+                        <div style="font-size: 11.5px; color: #a4b0be; background: rgba(255,255,255,0.04); padding: 10px; border-radius: 8px; text-align: center;">
+                            No destination traffic mapped through this corridor.
+                        </div>`;
+                } else {
+                    let totalBase = data.currentCars.length > 0 ? data.currentCars.length : data.routedCars.length;
+                    destListEl.innerHTML = data.destinations.map(d => {
+                        let pct = totalBase > 0 ? Math.round((d.count / totalBase) * 100) : 0;
+                        return `
+                            <div style="background: rgba(255,255,255,0.06); padding: 8px 10px; border-radius: 8px; border-left: 4px solid ${d.color}; display: flex; flex-direction: column; gap: 4px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; color: #fff;">
+                                        <span>${d.isTown ? '🏡' : '🏢'}</span>
+                                        <span>${d.name}</span>
+                                    </div>
+                                    <div style="font-size: 11.5px; font-weight: 700; color: ${d.color};">
+                                        ${d.count} car${d.count !== 1 ? 's' : ''} (${pct}%)
+                                    </div>
+                                </div>
+                                <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                                    <div style="width: ${pct}%; height: 100%; background: ${d.color}; border-radius: 2px;"></div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+
+            // 3. Commuter routes passing this way
+            if (flowsListEl) {
+                if (data.flows.length === 0) {
+                    flowsListEl.innerHTML = `
+                        <div style="font-size: 11px; color: #747d8c; font-style: italic; padding: 4px 0;">
+                            No town-workplace commuting paths route through here.
+                        </div>`;
+                } else {
+                    flowsListEl.innerHTML = data.flows.map(f => `
+                        <div style="font-size: 11px; background: rgba(0,0,0,0.3); padding: 5px 8px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; color: #dcdde1;">
+                            <span style="color: ${f.fromColor}; font-weight: 600;">${f.fromName}</span>
+                            <span style="color: #747d8c; margin: 0 4px;">➔</span>
+                            <span style="color: ${f.toColor}; font-weight: 600;">${f.toName}</span>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+
         document.getElementById('traffic-rate').addEventListener('input', (e) => {
             spawnMultiplier = parseInt(e.target.value);
             document.getElementById('rate-label').innerText = `${spawnMultiplier}x`;
@@ -785,6 +1105,13 @@
             let world = screenToWorld(sx, sy);
             mousePos.x = world.x;
             mousePos.y = world.y;
+
+            if (currentTool === 'inspect') {
+                let hoverEdge = getEdgeAt(world.x, world.y);
+                canvas.style.cursor = hoverEdge ? 'pointer' : 'crosshair';
+            } else {
+                canvas.style.cursor = 'crosshair';
+            }
         });
 
         canvas.addEventListener('mousedown', (e) => {
@@ -805,7 +1132,7 @@
             let clickX = world.x;
             let clickY = world.y;
 
-            if (currentTool in ROAD_TYPES || currentTool === 'delete' || currentTool === 'upgrade' || currentTool === 'downgrade') {
+            if (currentTool in ROAD_TYPES || currentTool === 'delete' || currentTool === 'upgrade' || currentTool === 'downgrade' || currentTool === 'inspect') {
                 dragStartNode = resolveNodeFromCoords(clickX, clickY);
             } else if (currentTool === 'signal') {
                 let target = nodes.find(n => Math.hypot(n.x - clickX, n.y - clickY) < 25);
@@ -879,11 +1206,39 @@
                             }
                             edges = edges.filter(e => e.from !== targetNode && e.to !== targetNode);
                             cars = cars.filter(c => c.currentNode !== targetNode && c.nextNode !== targetNode);
+                            if (selectedCorridor) {
+                                updateInspector();
+                            }
                             updateNodeTypes();
                             budget += 20;
                             addFloatingText(targetNode.x, targetNode.y - 15, '+$20', '#2ecc71');
                             updateUI();
                         }
+                    }
+                } else if (currentTool === 'inspect') {
+                    // Compute 2-segment vector in the dragged direction
+                    let dx = world.x - dragStartNode.x;
+                    let dy = world.y - dragStartNode.y;
+                    let dirX = 0, dirY = 0;
+                    if (Math.abs(dx) >= Math.abs(dy)) {
+                        dirX = Math.sign(dx) || 1;
+                    } else {
+                        dirY = Math.sign(dy) || 1;
+                    }
+
+                    let n1 = dragStartNode;
+                    let n2 = findOrCreateNode(n1.x + dirX * GRID, n1.y + dirY * GRID);
+                    let n3 = findOrCreateNode(n1.x + dirX * GRID * 2, n1.y + dirY * GRID * 2);
+
+                    let edge1 = edges.find(e => (e.from === n1 && e.to === n2) || (e.from === n2 && e.to === n1));
+                    let edge2 = edges.find(e => (e.from === n2 && e.to === n3) || (e.from === n3 && e.to === n2));
+
+                    if (!edge1 && !edge2) {
+                        addFloatingText((n1.x + n3.x) / 2, (n1.y + n3.y) / 2 - 16, 'No roads here! Drag along 2 road segments.', '#ff4757');
+                        closeInspector();
+                    } else {
+                        selectCorridor(n1, n2, n3, edge1, edge2);
+                        addFloatingText((n1.x + n3.x) / 2, (n1.y + n3.y) / 2 - 16, `Inspecting 2 Segments ➔`, '#00d2d3');
                     }
                 } else if (currentTool === 'upgrade') {
                     if (dragStartNode !== endNode) {
@@ -983,6 +1338,10 @@
             if (completedEl) completedEl.innerText = completedTrips.toLocaleString();
             if (failedEl) failedEl.innerText = failedTrips.toLocaleString();
 
+            if (selectedCorridor) {
+                updateInspector();
+            }
+
             let roadUpkeep = edges.reduce((sum, e) => sum + (ROAD_TYPES[e.type]?.upkeep || 0), 0);
             let intersectionUpkeep = nodes.filter(n => n.type === 'signal' || n.type === 'roundabout').length * 5;
             let totalUpkeep = roadUpkeep + intersectionUpkeep;
@@ -1080,6 +1439,11 @@
                                 nextNode: path[1],
                                 targetHubNode: endNode,
                                 originHubId: startOriginHub.id,
+                                originHubName: startOriginHub.name,
+                                originHubColor: startOriginHub.color,
+                                targetHubId: destinationHub.id,
+                                targetHubName: destinationHub.name,
+                                targetHubColor: destinationHub.color,
                                 speed: initialSpeed,
                                 lane: assignedLane,
                                 color: destinationHub.color,
@@ -1998,6 +2362,145 @@
                 }
             });
 
+            // Highlight Selected 2-Segment Corridor and Visualize Directional Flows
+            if (selectedCorridor) {
+                let { node1, node2, node3, edge1, edge2 } = selectedCorridor;
+                let data = getCorridorData(selectedCorridor);
+                let pulse = (Math.sin(Date.now() / 140) + 1) / 2;
+                let dashOffset = (Date.now() / 20) % 24;
+
+                let corridorSegments = [
+                    { from: node1, to: node2, edge: edge1, label: '①➔②' },
+                    { from: node2, to: node3, edge: edge2, label: '②➔③' }
+                ];
+
+                corridorSegments.forEach((seg, sIdx) => {
+                    let width = seg.edge ? (ROAD_TYPES[seg.edge.type]?.width || 20) : 20;
+                    ctx.save();
+
+                    // Glowing directed track outline
+                    ctx.strokeStyle = `rgba(0, 210, 211, ${0.45 + pulse * 0.45})`;
+                    ctx.lineWidth = width + 10 + (pulse * 4);
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(seg.from.x, seg.from.y);
+                    ctx.lineTo(seg.to.x, seg.to.y);
+                    ctx.stroke();
+
+                    // Bright core beam
+                    ctx.strokeStyle = '#00d2d3';
+                    ctx.lineWidth = width + 2;
+                    ctx.stroke();
+
+                    // Directional chevrons along the segment pointing in drag direction
+                    let sDx = seg.to.x - seg.from.x;
+                    let sDy = seg.to.y - seg.from.y;
+                    let sLen = Math.hypot(sDx, sDy) || 1;
+                    let uX = sDx / sLen;
+                    let uY = sDy / sLen;
+                    let perpX = -uY;
+                    let perpY = uX;
+
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = 'round';
+                    for (let f = 0.3; f <= 0.75; f += 0.4) {
+                        let cx = seg.from.x + sDx * f;
+                        let cy = seg.from.y + sDy * f;
+                        let arrLen = 7;
+                        let arrSpan = 6;
+                        ctx.beginPath();
+                        ctx.moveTo(cx - uX * arrLen + perpX * arrSpan, cy - uY * arrLen + perpY * arrSpan);
+                        ctx.lineTo(cx + uX * 3, cy + uY * 3);
+                        ctx.lineTo(cx - uX * arrLen - perpX * arrSpan, cy - uY * arrLen - perpY * arrSpan);
+                        ctx.stroke();
+                    }
+
+                    // Node badges (①, ②, ③)
+                    ctx.fillStyle = '#00d2d3';
+                    ctx.beginPath();
+                    ctx.arc(seg.from.x, seg.from.y, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 9px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`${sIdx + 1}`, seg.from.x, seg.from.y + 3.5);
+
+                    if (sIdx === 1) {
+                        ctx.fillStyle = '#2ecc71';
+                        ctx.beginPath();
+                        ctx.arc(seg.to.x, seg.to.y, 8, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 9px sans-serif';
+                        ctx.fillText('3', seg.to.x, seg.to.y + 3.5);
+                    }
+                    ctx.restore();
+                });
+
+                // Highlight active cars currently on these 2 segments in this direction
+                data.currentCars.forEach(c => {
+                    ctx.save();
+                    ctx.strokeStyle = '#00d2d3';
+                    ctx.lineWidth = 2.5 + pulse * 1.5;
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, 14 + pulse * 4, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                });
+
+                // Draw destination flow laser beams to each destination hub
+                let midX = (node1.x + node3.x) / 2;
+                let midY = (node1.y + node3.y) / 2;
+
+                data.destinations.forEach(dest => {
+                    let hub = dest.hub;
+                    if (!hub) return;
+
+                    ctx.save();
+                    let destColor = dest.color || '#f5cd79';
+
+                    // Laser beam to destination
+                    ctx.strokeStyle = destColor;
+                    ctx.lineWidth = 2.5;
+                    ctx.setLineDash([8, 6]);
+                    ctx.lineDashOffset = -dashOffset;
+                    ctx.globalAlpha = 0.85;
+                    ctx.beginPath();
+                    ctx.moveTo(midX, midY);
+                    ctx.lineTo(hub.x, hub.y);
+                    ctx.stroke();
+
+                    // Destination beacon ring
+                    ctx.globalAlpha = 1.0;
+                    ctx.strokeStyle = destColor;
+                    ctx.lineWidth = 2.5 + pulse * 1.5;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.arc(hub.x, hub.y, 28 + pulse * 8, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Floating destination tag
+                    let tagText = `🎯 ${dest.name}: ${dest.count} car${dest.count !== 1 ? 's' : ''}`;
+                    ctx.font = 'bold 11px sans-serif';
+                    let tagW = ctx.measureText(tagText).width + 18;
+                    let tagY = hub.y - 40;
+
+                    ctx.fillStyle = 'rgba(16, 20, 25, 0.94)';
+                    ctx.beginPath();
+                    ctx.roundRect(hub.x - tagW / 2, tagY, tagW, 20, 6);
+                    ctx.fill();
+                    ctx.strokeStyle = destColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(tagText, hub.x, tagY + 14);
+                    ctx.restore();
+                });
+            }
+
             if (dragStartNode) {
                 let targetNode = getStraightTargetNode(dragStartNode, mousePos.x, mousePos.y);
                 if (currentTool in ROAD_TYPES) {
@@ -2007,6 +2510,38 @@
                     ctx.moveTo(dragStartNode.x, dragStartNode.y);
                     ctx.lineTo(targetNode.x, targetNode.y);
                     ctx.stroke();
+                } else if (currentTool === 'inspect') {
+                    // Preview the 2 segments in the dragged direction
+                    let dx = mousePos.x - dragStartNode.x;
+                    let dy = mousePos.y - dragStartNode.y;
+                    let dirX = 0, dirY = 0;
+                    if (Math.abs(dx) >= Math.abs(dy)) {
+                        dirX = Math.sign(dx) || 1;
+                    } else {
+                        dirY = Math.sign(dy) || 1;
+                    }
+                    let p1 = dragStartNode;
+                    let p2X = p1.x + dirX * GRID;
+                    let p2Y = p1.y + dirY * GRID;
+                    let p3X = p1.x + dirX * GRID * 2;
+                    let p3Y = p1.y + dirY * GRID * 2;
+
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(0, 210, 211, 0.85)';
+                    ctx.lineWidth = 26;
+                    ctx.lineCap = 'round';
+                    ctx.setLineDash([10, 6]);
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p3X, p3Y);
+                    ctx.stroke();
+
+                    // Arrow head at target
+                    ctx.fillStyle = '#00d2d3';
+                    ctx.font = 'bold 13px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`① ➔ ② ➔ ③`, (p1.x + p3X) / 2, (p1.y + p3Y) / 2 - 18);
+                    ctx.restore();
                 } else if (currentTool === 'delete') {
                     ctx.save();
                     ctx.strokeStyle = 'rgba(231, 76, 60, 0.7)';
