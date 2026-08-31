@@ -1,87 +1,238 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Highways & Co. - Web Simulator</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        html, body { width: 100%; height: 100%; overflow: hidden; background: #0e1216; font-family: 'Segoe UI', system-ui, sans-serif; }
-        #canvas { display: block; width: 100vw; height: 100vh; background: #0e1216; cursor: crosshair; }
-        
-        #top-bar {
-            position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
-            background: rgba(18, 21, 25, 0.95); padding: 12px 26px; border-radius: 30px;
-            display: flex; gap: 24px; align-items: center; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
-            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.12); z-index: 10;
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
         }
-        .stat-item { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: #fff; }
-        .stat-val { color: #2ecc71; font-weight: 700; font-size: 15px; }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0e1216;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        #canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #0e1216;
+            cursor: crosshair;
+        }
+
+        #top-bar {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(18, 21, 25, 0.95);
+            padding: 12px 26px;
+            border-radius: 30px;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            z-index: 10;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            color: #fff;
+        }
+
+        .stat-val {
+            color: #2ecc71;
+            font-weight: 700;
+            font-size: 15px;
+        }
 
         #toolbar {
-            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(18, 21, 25, 0.95); padding: 10px 12px; border-radius: 18px;
-            display: flex; gap: 9px; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
-            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.12); z-index: 10;
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(18, 21, 25, 0.95);
+            padding: 10px 12px;
+            border-radius: 18px;
+            display: flex;
+            gap: 9px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            z-index: 10;
         }
+
         .btn {
-            background: #252a2e; border: 2px solid #38414a; color: #f0f0f0;
-            padding: 9px 15px; border-radius: 11px; cursor: pointer; font-size: 13.5px;
-            font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 3px;
+            background: #252a2e;
+            border: 2px solid #38414a;
+            color: #f0f0f0;
+            padding: 9px 15px;
+            border-radius: 11px;
+            cursor: pointer;
+            font-size: 13.5px;
+            font-weight: 600;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
             transition: all 0.15s ease;
         }
-        .btn:hover { background: #38414a; border-color: #00a8ff; color: #fff; }
-        .btn.active { background: #00a8ff; border-color: #0097e6; color: #fff; box-shadow: 0 0 14px rgba(0, 168, 255, 0.45); }
-        .btn .cost { font-size: 11.5px; opacity: 0.9; font-weight: 600; color: #dcdde1; }
+
+        .btn:hover {
+            background: #38414a;
+            border-color: #00a8ff;
+            color: #fff;
+        }
+
+        .btn.active {
+            background: #00a8ff;
+            border-color: #0097e6;
+            color: #fff;
+            box-shadow: 0 0 14px rgba(0, 168, 255, 0.45);
+        }
+
+        .btn .cost {
+            font-size: 11.5px;
+            opacity: 0.9;
+            font-weight: 600;
+            color: #dcdde1;
+        }
 
         .traffic-slider-wrap {
-            display: flex; flex-direction: column; gap: 4px; border-left: 1px solid rgba(255,255,255,0.12); padding-left: 16px; color: #fff;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border-left: 1px solid rgba(255, 255, 255, 0.12);
+            padding-left: 16px;
+            color: #fff;
         }
-        .traffic-slider-wrap label { font-size: 12.5px; opacity: 0.95; font-weight: 600; }
-        .traffic-slider-wrap input { width: 130px; cursor: pointer; }
+
+        .traffic-slider-wrap label {
+            font-size: 12.5px;
+            opacity: 0.95;
+            font-weight: 600;
+        }
+
+        .traffic-slider-wrap input {
+            width: 130px;
+            cursor: pointer;
+        }
 
         #zoom-controls {
-            position: absolute; right: 20px; bottom: 20px;
-            background: rgba(18, 21, 25, 0.95); padding: 6px; border-radius: 14px;
-            display: flex; flex-direction: column; align-items: center; gap: 6px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.55); backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.12); z-index: 10;
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            background: rgba(18, 21, 25, 0.95);
+            padding: 6px;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            z-index: 10;
         }
+
         .zoom-btn {
-            width: 38px; height: 38px; background: #252a2e; border: 1px solid #38414a;
-            color: #fff; border-radius: 10px; cursor: pointer; display: flex;
-            align-items: center; justify-content: center; font-size: 15px;
-            font-weight: bold; transition: all 0.15s ease;
+            width: 38px;
+            height: 38px;
+            background: #252a2e;
+            border: 1px solid #38414a;
+            color: #fff;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: bold;
+            transition: all 0.15s ease;
         }
-        .zoom-btn:hover { background: #00a8ff; border-color: #0097e6; }
-        #zoom-level { font-size: 12.5px; font-weight: 700; color: #00a8ff; padding: 2px 0; }
+
+        .zoom-btn:hover {
+            background: #00a8ff;
+            border-color: #0097e6;
+        }
+
+        #zoom-level {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #00a8ff;
+            padding: 2px 0;
+        }
 
         #road-inspector {
-            position: absolute; top: 80px; left: 24px;
-            width: 330px; max-height: calc(100vh - 180px);
-            background: rgba(16, 20, 25, 0.96); padding: 18px; border-radius: 18px;
-            box-shadow: 0 16px 40px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.12);
+            position: absolute;
+            top: 80px;
+            left: 24px;
+            width: 330px;
+            max-height: calc(100vh - 180px);
+            background: rgba(16, 20, 25, 0.96);
+            padding: 18px;
+            border-radius: 18px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.12);
             backdrop-filter: blur(16px);
-            z-index: 15; display: none; overflow-y: auto; color: #fff;
+            z-index: 15;
+            display: none;
+            overflow-y: auto;
+            color: #fff;
             animation: inspectFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        #road-inspector::-webkit-scrollbar { width: 6px; }
-        #road-inspector::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+
+        #road-inspector::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #road-inspector::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
         @keyframes inspectFadeIn {
-            from { opacity: 0; transform: translateY(-10px) scale(0.98); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
+            from {
+                opacity: 0;
+                transform: translateY(-10px) scale(0.98);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
         }
     </style>
 </head>
+
 <body>
 
     <div id="top-bar">
-        <div class="stat-item" id="clock-widget" title="Current simulated city time and commuter rush cycle" style="background: rgba(0,0,0,0.38); padding: 5px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; align-items: flex-start; gap: 2px;">
+        <div class="stat-item" id="clock-widget" title="Current simulated city time and commuter rush cycle"
+            style="background: rgba(0,0,0,0.38); padding: 5px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; align-items: flex-start; gap: 2px;">
             <div style="display: flex; align-items: center; gap: 7px;">
                 <span id="time-display" style="font-weight: 700; color: #f5cd79; font-size: 14px;">🕒 07:00 AM</span>
-                <span id="rush-badge" style="font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 4px; background: rgba(230, 126, 34, 0.25); color: #f39c12; border: 1px solid rgba(230, 126, 34, 0.4);">🌅 Morning Rush</span>
+                <span id="rush-badge"
+                    style="font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 4px; background: rgba(230, 126, 34, 0.25); color: #f39c12; border: 1px solid rgba(230, 126, 34, 0.4);">🌅
+                    Morning Rush</span>
             </div>
-            <span id="commute-desc" style="font-size: 11.5px; color: rgba(255,255,255,0.85); font-weight: 600;">🏡 Towns ➔ 🏢 Work (85%)</span>
+            <span id="commute-desc" style="font-size: 11.5px; color: rgba(255,255,255,0.85); font-weight: 600;">🏡 Towns
+                ➔ 🏢 Work (85%)</span>
         </div>
         <div class="stat-item">Budget: <span id="budget-val" class="stat-val">$5,000</span></div>
         <div class="stat-item">Road Upkeep: <span id="upkeep-val" style="color:#e67e22">-$0 / 10s</span></div>
@@ -141,44 +292,72 @@
 
     <!-- Floating Road Corridor Destinations Inspector Panel -->
     <div id="road-inspector">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px; margin-bottom: 14px;">
+        <div
+            style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px; margin-bottom: 14px;">
             <div style="display: flex; align-items: center; gap: 10px;">
-                <span id="inspect-icon" style="font-size: 24px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));">🧭</span>
+                <span id="inspect-icon"
+                    style="font-size: 24px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));">🧭</span>
                 <div>
-                    <div id="inspect-title" style="font-weight: 700; font-size: 15px; color: #fff; line-height: 1.2;">Directed 2-Segment Corridor</div>
-                    <div id="inspect-sub" style="font-size: 11px; color: #00d2d3; font-weight: 600; margin-top: 2px;">Node 1 ➔ Node 2 ➔ Node 3</div>
+                    <div id="inspect-title" style="font-weight: 700; font-size: 15px; color: #fff; line-height: 1.2;">
+                        Directed 2-Segment Corridor</div>
+                    <div id="inspect-sub" style="font-size: 11px; color: #00d2d3; font-weight: 600; margin-top: 2px;">
+                        Node 1 ➔ Node 2 ➔ Node 3</div>
                 </div>
             </div>
-            <button onclick="closeInspector()" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #dcdde1; font-size: 14px; cursor: pointer; width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.15s;" onmouseover="this.style.background='rgba(231,76,60,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'" title="Close Inspector">✕</button>
+            <button onclick="closeInspector()"
+                style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #dcdde1; font-size: 14px; cursor: pointer; width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.15s;"
+                onmouseover="this.style.background='rgba(231,76,60,0.4)'"
+                onmouseout="this.style.background='rgba(255,255,255,0.08)'" title="Close Inspector">✕</button>
         </div>
 
         <!-- Quick Stats Grid -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
-            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Direction</div>
-                <div id="inspect-direction" style="font-weight: 700; font-size: 13px; color: #00a8ff; margin-top: 2px;">➡️ Eastbound</div>
+            <div
+                style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div
+                    style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">
+                    Direction</div>
+                <div id="inspect-direction" style="font-weight: 700; font-size: 13px; color: #00a8ff; margin-top: 2px;">
+                    ➡️ Eastbound</div>
             </div>
-            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">On Segments Now</div>
-                <div id="inspect-current-cars" style="font-weight: 700; font-size: 13.5px; color: #2ecc71; margin-top: 2px;">0 cars</div>
+            <div
+                style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div
+                    style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">
+                    On Segments Now</div>
+                <div id="inspect-current-cars"
+                    style="font-weight: 700; font-size: 13.5px; color: #2ecc71; margin-top: 2px;">0 cars</div>
             </div>
-            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Segment 1</div>
-                <div id="inspect-seg1" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">Local</div>
+            <div
+                style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div
+                    style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">
+                    Segment 1</div>
+                <div id="inspect-seg1" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">Local
+                </div>
             </div>
-            <div style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                <div style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Segment 2</div>
-                <div id="inspect-seg2" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">Avenue</div>
+            <div
+                style="background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                <div
+                    style="font-size: 10px; color: #95a5a6; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">
+                    Segment 2</div>
+                <div id="inspect-seg2" style="font-weight: 700; font-size: 12px; color: #f1c40f; margin-top: 2px;">
+                    Avenue</div>
             </div>
         </div>
 
         <!-- Live Cars on Segments Section -->
         <div style="margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-size: 11.5px; font-weight: 700; color: #2ecc71; text-transform: uppercase; letter-spacing: 0.6px;">🚗 Cars Currently On These 2 Segments</span>
-                <span id="inspect-cars-count-badge" style="font-size: 11px; color: #2ecc71; font-weight: 700; background: rgba(46,204,113,0.15); padding: 2px 7px; border-radius: 4px;">0 cars</span>
+                <span
+                    style="font-size: 11.5px; font-weight: 700; color: #2ecc71; text-transform: uppercase; letter-spacing: 0.6px;">🚗
+                    Cars Currently On These 2 Segments</span>
+                <span id="inspect-cars-count-badge"
+                    style="font-size: 11px; color: #2ecc71; font-weight: 700; background: rgba(46,204,113,0.15); padding: 2px 7px; border-radius: 4px;">0
+                    cars</span>
             </div>
-            <div id="inspect-cars-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; padding-right: 2px;">
+            <div id="inspect-cars-list"
+                style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; padding-right: 2px;">
                 <!-- Dynamically populated -->
             </div>
         </div>
@@ -186,20 +365,26 @@
         <!-- Destinations Section -->
         <div style="margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-size: 11.5px; font-weight: 700; color: #f5cd79; text-transform: uppercase; letter-spacing: 0.6px;">🎯 Destination Breakdown</span>
-                <span id="inspect-dest-count" style="font-size: 11px; color: #747d8c; font-weight: 600;">0 targets</span>
+                <span
+                    style="font-size: 11.5px; font-weight: 700; color: #f5cd79; text-transform: uppercase; letter-spacing: 0.6px;">🎯
+                    Destination Breakdown</span>
+                <span id="inspect-dest-count" style="font-size: 11px; color: #747d8c; font-weight: 600;">0
+                    targets</span>
             </div>
-            <div id="inspect-destinations-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; padding-right: 2px;">
+            <div id="inspect-destinations-list"
+                style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; padding-right: 2px;">
                 <!-- Dynamically populated -->
             </div>
         </div>
 
         <!-- Commuter Routes Section -->
         <div>
-            <div style="font-size: 11.5px; font-weight: 700; color: #3498db; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">
+            <div
+                style="font-size: 11.5px; font-weight: 700; color: #3498db; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">
                 🔄 Commuter Routes Passing This Way
             </div>
-            <div id="inspect-flows-list" style="display: flex; flex-direction: column; gap: 5px; max-height: 110px; overflow-y: auto; padding-right: 2px;">
+            <div id="inspect-flows-list"
+                style="display: flex; flex-direction: column; gap: 5px; max-height: 110px; overflow-y: auto; padding-right: 2px;">
                 <!-- Dynamically populated -->
             </div>
         </div>
@@ -392,10 +577,10 @@
             let n = nodes.find(n => n.x === clX && n.y === clY);
             if (n) return n;
 
-            let newNode = { 
-                id: nodes.length + 1, 
-                x: clX, 
-                y: clY, 
+            let newNode = {
+                id: nodes.length + 1,
+                x: clX,
+                y: clY,
                 type: 'none',
                 signalState: 'NS_GREEN',
                 signalTimer: 0
@@ -472,7 +657,7 @@
             let dx = endNode.x - startNode.x;
             let dy = endNode.y - startNode.y;
             let steps = Math.max(Math.abs(dx), Math.abs(dy)) / GRID;
-            
+
             if (steps === 0) return 0;
 
             let stepX = dx / steps;
@@ -1789,8 +1974,8 @@
                         // Use the angle of the exit point ON the ring as the target.
                         // exitPointX/Y is already on the circle, so atan2 gives exact exit angle.
                         let exitAngle = Math.atan2(exitPointY - rNode.y, exitPointX - rNode.x);
-                        let normCarAngle  = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-                        let normExitAngle = ((exitAngle            % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        let normCarAngle = ((car.roundaboutAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+                        let normExitAngle = ((exitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
                         let diff = Math.abs(normCarAngle - normExitAngle);
                         if (diff > Math.PI) diff = 2 * Math.PI - diff;
 
@@ -2182,7 +2367,7 @@
         function drawHub(ctx, h, connected) {
             ctx.save();
             let hubNum = h.hubNumber || h.id;
-            
+
             let isJammed = h.isSpawn && ((h.blockedCycles && h.blockedCycles > 0) || (h.jamFlash && h.jamFlash > 0));
 
             // Pulsing Emergency Warning Ripple for Jammed Buildings
@@ -3091,4 +3276,5 @@
         };
     </script>
 </body>
+
 </html>
