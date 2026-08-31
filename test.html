@@ -2368,7 +2368,7 @@
             ctx.save();
             let hubNum = h.hubNumber || h.id;
 
-            let isJammed = h.isSpawn && ((h.blockedCycles && h.blockedCycles > 0) || (h.jamFlash && h.jamFlash > 0));
+            let isJammed = h.isSpawn && ((h.blockedCycles && h.blockedCycles >= 5) || (h.jamFlash && h.jamFlash > 0));
 
             // Pulsing Emergency Warning Ripple for Jammed Buildings
             if (isJammed) {
