@@ -236,6 +236,9 @@
         let completedTrips = 0;
         let failedTrips = 0;
         let gameMinutes = 7 * 60; // Start at 7:00 AM
+        // Per-direction round-robin counter: guarantees alternating lane assignment at spawn
+        // so cars from the same hub distribute evenly without counting a tiny 40px window
+        let edgeLaneCounter = new Map();
 
         function getGameTimeInfo() {
             let totalMins = Math.floor(gameMinutes) % 1440;
@@ -657,25 +660,66 @@
             return { lanes: 1, radius: 20 };
         }
 
-        function selectBestLane(fromNode, toNode, edge) {
+        function getAllowedLanes(fromNode, toNode, edge, afterNode = null) {
+            let totalLanes = ROAD_TYPES[edge.type].lanesPerDir;
+            if (totalLanes <= 1) return [0];
+
+            if (afterNode && afterNode !== toNode) {
+                let dxIn = toNode.x - fromNode.x;
+                let dyIn = toNode.y - fromNode.y;
+                let lenIn = Math.hypot(dxIn, dyIn) || 1;
+                let inDirX = dxIn / lenIn;
+                let inDirY = dyIn / lenIn;
+
+                let dxOut = afterNode.x - toNode.x;
+                let dyOut = afterNode.y - toNode.y;
+                let lenOut = Math.hypot(dxOut, dyOut) || 1;
+                let outDirX = dxOut / lenOut;
+                let outDirY = dyOut / lenOut;
+
+                let turnCross = inDirX * outDirY - inDirY * outDirX;
+
+                if (totalLanes === 2) {
+                    if (turnCross < -0.05) return [0]; // Left turn -> Inside Lane 0
+                    if (turnCross > 0.05) return [1]; // Right turn -> Outside Lane 1
+                    return [0, 1]; // Straight -> Lane 0 or Lane 1
+                } else if (totalLanes >= 3) {
+                    if (turnCross < -0.05) return [0]; // Left turn -> Lane 0
+                    if (turnCross > 0.05) return [2]; // Right turn -> Lane 2
+                    return [1, 0, 2]; // Straight -> Lane 1 preferred, or 0 / 2
+                }
+            }
+            return Array.from({ length: totalLanes }, (_, i) => i);
+        }
+
+        function selectBestLane(fromNode, toNode, edge, afterNode = null, currentLane = null) {
             let totalLanes = ROAD_TYPES[edge.type].lanesPerDir;
             if (totalLanes <= 1) return 0;
 
-            let laneCounts = new Array(totalLanes).fill(0);
-            cars.forEach(c => {
-                let sameSegment = (c.currentNode === fromNode && c.nextNode === toNode);
-                if (sameSegment && c.lane < totalLanes) {
-                    laneCounts[c.lane]++;
-                }
-            });
+            let allowedLanes = getAllowedLanes(fromNode, toNode, edge, afterNode);
+            if (allowedLanes.length === 1) return allowedLanes[0];
 
-            let minCount = Math.min(...laneCounts);
-            let candidates = [];
-            laneCounts.forEach((cnt, idx) => {
-                if (cnt === minCount) candidates.push(idx);
-            });
+            // HYSTERESIS: If current lane is legal and not over-congested, keep it.
+            // Prevents oscillation — only switch when this lane has strictly more cars.
+            if (currentLane !== null && allowedLanes.includes(currentLane)) {
+                let laneCounts = new Array(totalLanes).fill(0);
+                cars.forEach(c => {
+                    if (!c) return;
+                    if (c.currentNode === fromNode && c.nextNode === toNode && c.lane >= 0 && c.lane < totalLanes)
+                        laneCounts[c.lane]++;
+                });
+                let minCount = Math.min(...allowedLanes.map(l => laneCounts[l]));
+                if (laneCounts[currentLane] <= minCount) return currentLane;
+                // Over-congested: switch to least-used lane (deterministic, no random)
+                return allowedLanes.reduce((best, l) => laneCounts[l] < laneCounts[best] ? l : best, allowedLanes[0]);
+            }
 
-            return candidates[Math.floor(Math.random() * candidates.length)];
+            // No current lane (spawn / turn onto new road): use round-robin counter
+            // so successive cars from the same direction alternate lanes perfectly
+            let key = `${fromNode.x},${fromNode.y}->${toNode.x},${toNode.y}`;
+            let count = edgeLaneCounter.get(key) || 0;
+            edgeLaneCounter.set(key, count + 1);
+            return allowedLanes[count % allowedLanes.length];
         }
 
         function isHubConnected(hub) {
@@ -1400,7 +1444,8 @@
                     let path = findPath(startNode, endNode);
                     if (path && path.length > 1) {
                         let edge = edges.find(e => (e.from === path[0] && e.to === path[1]) || (e.to === path[0] && e.from === path[1]));
-                        let assignedLane = edge ? selectBestLane(path[0], path[1], edge) : 0;
+                        let afterNode = path.length > 2 ? path[2] : null;
+                        let assignedLane = edge ? selectBestLane(path[0], path[1], edge, null, null) : 0;
                         // One car per hub per tick — prevents burst-spawning from the same building
                         let spawnKey = `${startOriginHub.id}`;
 
@@ -1453,7 +1498,10 @@
                                 crossingIntersection: false,
                                 inRoundabout: false,
                                 roundaboutLane: 0,
-                                roundaboutAngle: null
+                                roundaboutAngle: null,
+                                turnPath: null,
+                                turnIdx: 0,
+                                laneChangeCooldown: 0
                             });
                         } else {
                             failedTrips++;
@@ -1528,6 +1576,82 @@
                     }
                 }
             }
+            return null;
+        }
+
+        function generateIntersectionTurnPath(fromNode, curNode, toNode, inLane, outLane, inEdgeType, outEdgeType) {
+            if (!fromNode || !curNode || !toNode) return null;
+            if (toNode.type === 'roundabout' || curNode.type === 'roundabout') return null;
+
+            let dxIn = curNode.x - fromNode.x;
+            let dyIn = curNode.y - fromNode.y;
+            let lenIn = Math.hypot(dxIn, dyIn) || 1;
+            let inDirX = dxIn / lenIn;
+            let inDirY = dyIn / lenIn;
+            let inRightNx = -inDirY;
+            let inRightNy = inDirX;
+
+            let dxOut = toNode.x - curNode.x;
+            let dyOut = toNode.y - curNode.y;
+            let lenOut = Math.hypot(dxOut, dyOut) || 1;
+            let outDirX = dxOut / lenOut;
+            let outDirY = dyOut / lenOut;
+            let outRightNx = -outDirY;
+            let outRightNy = outDirX;
+
+            let inLaneOffset = 4 + (inLane * 7);
+            let outLaneOffset = 4 + (outLane * 7);
+
+            // Cross product to determine turning direction
+            let turnCross = inDirX * outDirY - inDirY * outDirX;
+
+            function quadraticBezier(p0, p1, p2, t) {
+                let mt = 1 - t;
+                return {
+                    x: mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
+                    y: mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+                };
+            }
+
+            if (turnCross < -0.05) {
+                // ==========================================
+                // NATURAL CURVED LEFT TURN (Smooth Bézier Arc)
+                // ==========================================
+                let pStart = {
+                    x: curNode.x - inDirX * (outLaneOffset + 2) + inRightNx * inLaneOffset,
+                    y: curNode.y - inDirY * (outLaneOffset + 2) + inRightNy * inLaneOffset
+                };
+                let pEnd = {
+                    x: curNode.x + outDirX * (inLaneOffset + 6) + outRightNx * outLaneOffset,
+                    y: curNode.y + outDirY * (inLaneOffset + 6) + outRightNy * outLaneOffset
+                };
+                // Control apex: smooth curve past center into receiving lane
+                let pCtrl = {
+                    x: curNode.x + inDirX * (outLaneOffset * 0.7) + outDirX * (inLaneOffset * 0.3) + inRightNx * (inLaneOffset * 0.5) + outRightNx * (outLaneOffset * 0.5),
+                    y: curNode.y + inDirY * (outLaneOffset * 0.7) + outDirY * (inLaneOffset * 0.3) + inRightNy * (inLaneOffset * 0.5) + outRightNy * (outLaneOffset * 0.5)
+                };
+
+                return [0.25, 0.5, 0.75, 1.0].map(t => quadraticBezier(pStart, pCtrl, pEnd, t));
+            } else if (turnCross > 0.05) {
+                // ==========================================
+                // NATURAL CURVED RIGHT TURN (Smooth Inside Arc)
+                // ==========================================
+                let pStart = {
+                    x: curNode.x - inDirX * (outLaneOffset * 0.6) + inRightNx * inLaneOffset,
+                    y: curNode.y - inDirY * (outLaneOffset * 0.6) + inRightNy * inLaneOffset
+                };
+                let pEnd = {
+                    x: curNode.x + outDirX * (inLaneOffset * 0.8) + outRightNx * outLaneOffset,
+                    y: curNode.y + outDirY * (inLaneOffset * 0.8) + outRightNy * outLaneOffset
+                };
+                let pCtrl = {
+                    x: curNode.x + inRightNx * inLaneOffset + outRightNx * outLaneOffset,
+                    y: curNode.y + inRightNy * inLaneOffset + outRightNy * outLaneOffset
+                };
+
+                return [0.33, 0.66, 1.0].map(t => quadraticBezier(pStart, pCtrl, pEnd, t));
+            }
+
             return null;
         }
 
@@ -1722,8 +1846,40 @@
                 let distToTargetNode = Math.hypot(car.nextNode.x - car.x, car.nextNode.y - car.y);
                 let distToTarget = Math.hypot(targetX - car.x, targetY - car.y);
 
+                // If executing an intersection turn path, steer towards turn waypoints
+                if (car.turnPath && car.turnPath.length > 0) {
+                    let wp = car.turnPath[car.turnIdx];
+                    if (wp) {
+                        targetX = wp.x;
+                        targetY = wp.y;
+                        distToTarget = Math.hypot(targetX - car.x, targetY - car.y);
+                        if (distToTarget < Math.max(7, car.speed * 2)) {
+                            car.turnIdx++;
+                            if (car.turnIdx >= car.turnPath.length) {
+                                car.turnPath = null;
+                                car.turnIdx = 0;
+                            }
+                        }
+                    } else {
+                        car.turnPath = null;
+                        car.turnIdx = 0;
+                    }
+                }
+
                 let stopRequired = false;
                 let stopLineDist = 18;
+
+                // Intersection approach turn-lane enforcement:
+                // Only switch if the vehicle's current lane is illegal for its upcoming turn,
+                // AND the car isn't already engaged in stop/signal protocol.
+                if (roadStyle.lanesPerDir > 1 && distToTargetNode < 120 && !car.turnPath &&
+                    !car.stoppedAtStopSign && !car.crossingIntersection && car.stopTimer === 0) {
+                    let afterNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                    let allowed = getAllowedLanes(car.currentNode, car.nextNode, edge, afterNode);
+                    if (!allowed.includes(car.lane)) {
+                        car.lane = allowed[0];
+                    }
+                }
 
                 // Yield to circulating traffic and seamlessly merge when approaching a roundabout
                 if (car.nextNode.type === 'roundabout') {
@@ -1895,6 +2051,64 @@
                     }
                 }
 
+                // Center-clip guard: stop only when one car's center is literally
+                // inside another car (center-to-center < 7px, half a car body).
+                // Allows a small natural overlap but prevents full stacking.
+                // Skips: opposing-direction traffic (different road halves),
+                //        and cars executing turn paths (legitimately crossing intersection space).
+                if (!brakeForCar && !car.turnPath) {
+                    let myDirX = Math.cos(car.angle);
+                    let myDirY = Math.sin(car.angle);
+                    for (let j = 0; j < cars.length; j++) {
+                        if (i === j) continue;
+                        let other = cars[j];
+                        if (other.turnPath) continue; // other car is mid-turn, let it pass
+                        if (Math.hypot(other.x - car.x, other.y - car.y) < 7) {
+                            let otherDirX = Math.cos(other.angle);
+                            let otherDirY = Math.sin(other.angle);
+                            // Skip if genuinely opposing traffic (different road halves)
+                            if (myDirX * otherDirX + myDirY * otherDirY > -0.3) {
+                                brakeForCar = true;
+                                car.speed = 0;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Dynamic overtaking: only if stuck behind slow/stopped traffic for multiple seconds
+                car.laneChangeCooldown = Math.max(0, (car.laneChangeCooldown || 0) - 1);
+                if (brakeForCar && car.speed < 0.3) {
+                    car.stuckInLaneFrames = (car.stuckInLaneFrames || 0) + 1;
+                } else {
+                    car.stuckInLaneFrames = 0;
+                }
+
+                if (car.stuckInLaneFrames > 45 && roadStyle.lanesPerDir > 1 && !car.turnPath && distToTargetNode > 60 && car.laneChangeCooldown === 0) {
+                    let afterNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                    let allowed = getAllowedLanes(car.currentNode, car.nextNode, edge, afterNode);
+                    if (allowed.length > 1) {
+                        for (let candLane of allowed) {
+                            if (candLane === car.lane) continue;
+                            let laneDistOffset = (candLane - car.lane) * 7;
+                            let candX = car.x + rightNx * laneDistOffset;
+                            let candY = car.y + rightNy * laneDistOffset;
+                            let laneClear = !cars.some(other => {
+                                if (other === car) return false;
+                                let onSameSeg = (other.currentNode === car.currentNode && other.nextNode === car.nextNode && other.lane === candLane);
+                                return onSameSeg && Math.hypot(other.x - candX, other.y - candY) < 28;
+                            });
+                            if (laneClear) {
+                                car.lane = candLane;
+                                car.laneChangeCooldown = 180; // 3 second cooldown
+                                car.stuckInLaneFrames = 0;
+                                brakeForCar = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 if (!stopRequired && !brakeForCar) {
                     car.speed = Math.min(roadStyle.speedLimit, car.speed + 0.08);
                     if (car.stoppedAtStopSign && !car.crossingIntersection) {
@@ -1902,7 +2116,8 @@
                     }
                 }
 
-                if (!stopRequired && !brakeForCar && (distToTarget < Math.max(10, car.speed * 2) || distToTargetNode < 12)) {
+                if (!stopRequired && !brakeForCar && !car.turnPath && (distToTarget < Math.max(10, car.speed * 2) || distToTargetNode < 12)) {
+                    let oldFromNode = car.currentNode;
                     car.currentNode = car.nextNode;
                     car.pathIdx++;
                     if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
@@ -1916,10 +2131,35 @@
                         car.nextNode = car.path[car.pathIdx + 1];
                         let nextEdge = edges.find(e => (e.from === car.currentNode && e.to === car.nextNode) || (e.from === car.nextNode && e.to === car.currentNode));
                         if (nextEdge) {
-                            if (car.speed < 1.0) {
-                                car.lane = selectBestLane(car.currentNode, car.nextNode, nextEdge);
+                            let nextMaxLanes = ROAD_TYPES[nextEdge.type].lanesPerDir;
+                            // Detect genuine direction change (turn) vs straight-through continuation
+                            let dxIn = car.currentNode.x - oldFromNode.x;
+                            let dyIn = car.currentNode.y - oldFromNode.y;
+                            let lenIn = Math.hypot(dxIn, dyIn) || 1;
+                            let dxOut = car.nextNode.x - car.currentNode.x;
+                            let dyOut = car.nextNode.y - car.currentNode.y;
+                            let lenOut = Math.hypot(dxOut, dyOut) || 1;
+                            let dot = (dxIn / lenIn) * (dxOut / lenOut) + (dyIn / lenIn) * (dyOut / lenOut);
+                            if (dot < 0.85) {
+                                // Genuine turn: pick best lane for new road direction (fresh, no hysteresis)
+                                let afterNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                                car.lane = selectBestLane(car.currentNode, car.nextNode, nextEdge, afterNode, null);
+                            } else {
+                                // Straight continuation: keep lane, only clamp to new road width
+                                if (car.lane >= nextMaxLanes) car.lane = nextMaxLanes - 1;
                             }
                         }
+                        // Generate smooth turning trajectory so left turns never cut across opposing lanes
+                        let prevEdge = edges.find(e => (e.from === oldFromNode && e.to === car.currentNode) || (e.from === car.currentNode && e.to === oldFromNode));
+                        let tPath = generateIntersectionTurnPath(oldFromNode, car.currentNode, car.nextNode, car.lane, car.lane, prevEdge?.type, nextEdge?.type);
+                        if (tPath) {
+                            car.turnPath = tPath;
+                            car.turnIdx = 0;
+                        } else {
+                            car.turnPath = null;
+                            car.turnIdx = 0;
+                        }
+
                         // Release stop-sign crossing token when car advances past node
                         if (car.currentNode.crossingCar === car) {
                             car.currentNode.crossingCar = null;
@@ -2183,6 +2423,71 @@
             ctx.restore();
         }
 
+        function drawPavementArrow(ctx, cx, cy, dirX, dirY, rightNx, rightNy, type) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.lineWidth = 1.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            // Straight stem
+            let stemStart = { x: cx - dirX * 5.5, y: cy - dirY * 5.5 };
+            let stemEnd = { x: cx + dirX * 2.5, y: cy + dirY * 2.5 };
+
+            if (type === 'straight' || type === 'left_straight' || type === 'right_straight') {
+                ctx.beginPath();
+                ctx.moveTo(stemStart.x, stemStart.y);
+                ctx.lineTo(stemEnd.x, stemEnd.y);
+                ctx.stroke();
+
+                // Straight arrowhead
+                let tip = { x: cx + dirX * 6, y: cy + dirY * 6 };
+                ctx.beginPath();
+                ctx.moveTo(tip.x, tip.y);
+                ctx.lineTo(stemEnd.x - rightNx * 2.2 - dirX * 1.8, stemEnd.y - rightNy * 2.2 - dirY * 1.8);
+                ctx.lineTo(stemEnd.x + rightNx * 2.2 - dirX * 1.8, stemEnd.y + rightNy * 2.2 - dirY * 1.8);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            if (type === 'left' || type === 'left_straight') {
+                // Left curve branch
+                let leftTip = { x: cx + dirX * 3.5 - rightNx * 4.5, y: cy + dirY * 3.5 - rightNy * 4.5 };
+                ctx.beginPath();
+                ctx.moveTo(cx - dirX * 2.5, cy - dirY * 2.5);
+                ctx.quadraticCurveTo(cx - rightNx * 2.8, cy - rightNy * 2.8, leftTip.x, leftTip.y);
+                ctx.stroke();
+
+                // Left arrowhead pointing toward -rightN
+                ctx.beginPath();
+                ctx.moveTo(leftTip.x, leftTip.y);
+                ctx.lineTo(leftTip.x + rightNx * 2 + dirX * 2.2, leftTip.y + rightNy * 2 + dirY * 2.2);
+                ctx.lineTo(leftTip.x + rightNx * 2 - dirX * 2.2, leftTip.y + rightNy * 2 - dirY * 2.2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            if (type === 'right' || type === 'right_straight') {
+                // Right curve branch
+                let rightTip = { x: cx + dirX * 3.5 + rightNx * 4.5, y: cy + dirY * 3.5 + rightNy * 4.5 };
+                ctx.beginPath();
+                ctx.moveTo(cx - dirX * 2.5, cy - dirY * 2.5);
+                ctx.quadraticCurveTo(cx + rightNx * 2.8, cy + rightNy * 2.8, rightTip.x, rightTip.y);
+                ctx.stroke();
+
+                // Right arrowhead pointing toward +rightN
+                ctx.beginPath();
+                ctx.moveTo(rightTip.x, rightTip.y);
+                ctx.lineTo(rightTip.x - rightNx * 2 + dirX * 2.2, rightTip.y - rightNy * 2 + dirY * 2.2);
+                ctx.lineTo(rightTip.x - rightNx * 2 - dirX * 2.2, rightTip.y - rightNy * 2 - dirY * 2.2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -2360,6 +2665,63 @@
                     }
                     ctx.setLineDash([]);
                 }
+            });
+
+            // Pavement floor markings: Turn Lane Arrows & Stop Lines at Intersections
+            nodes.forEach(n => {
+                let isIntersection = (n.type === 'stopsign' || n.type === 'signal' || n.type === 'roundabout');
+                let connected = edges.filter(e => e.from === n || e.to === n);
+                if (!isIntersection && connected.length < 3) return;
+
+                connected.forEach(e => {
+                    let fromNode = (e.from === n) ? e.to : e.from;
+                    let dx = n.x - fromNode.x;
+                    let dy = n.y - fromNode.y;
+                    let len = Math.hypot(dx, dy);
+                    if (len < 28) return;
+
+                    let dirX = dx / len;
+                    let dirY = dy / len;
+                    let rightNx = -dirY;
+                    let rightNy = dirX;
+
+                    let totalLanes = ROAD_TYPES[e.type].lanesPerDir;
+                    let stopDist = (n.type === 'roundabout') ? (getRoundaboutSpecs(n).radius + 12) : 18;
+
+                    // 1. Solid White Transverse Stop Line
+                    let stopStartX = n.x - dirX * stopDist + rightNx * 1;
+                    let stopStartY = n.y - dirY * stopDist + rightNy * 1;
+                    let stopEndX = n.x - dirX * stopDist + rightNx * (4 + (totalLanes - 1) * 7 + 4);
+                    let stopEndY = n.y - dirY * stopDist + rightNy * (4 + (totalLanes - 1) * 7 + 4);
+
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.lineWidth = 2.4;
+                    ctx.lineCap = 'butt';
+                    ctx.beginPath();
+                    ctx.moveTo(stopStartX, stopStartY);
+                    ctx.lineTo(stopEndX, stopEndY);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // 2. Floor / Pavement Directional Arrows for multi-lane roads
+                    if (totalLanes >= 2 && len >= 42) {
+                        for (let l = 0; l < totalLanes; l++) {
+                            let laneOffset = 4 + l * 7;
+                            let arrowX = n.x - dirX * (stopDist + 14) + rightNx * laneOffset;
+                            let arrowY = n.y - dirY * (stopDist + 14) + rightNy * laneOffset;
+
+                            let arrowType = 'straight';
+                            if (totalLanes === 2) {
+                                arrowType = (l === 0) ? 'left_straight' : 'right_straight';
+                            } else if (totalLanes >= 3) {
+                                arrowType = (l === 0) ? 'left' : (l === totalLanes - 1 ? 'right' : 'straight');
+                            }
+
+                            drawPavementArrow(ctx, arrowX, arrowY, dirX, dirY, rightNx, rightNy, arrowType);
+                        }
+                    }
+                });
             });
 
             // Highlight Selected 2-Segment Corridor and Visualize Directional Flows
