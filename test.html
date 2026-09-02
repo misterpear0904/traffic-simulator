@@ -245,6 +245,13 @@
             <label>Traffic Demand Scale: <b id="rate-label" style="color:#00a8ff">5x</b></label>
             <input type="range" id="traffic-rate" min="1" max="25" value="5" step="1">
         </div>
+        <button id="btn-spawn-toggle"
+            onclick="spawningPaused = !spawningPaused; document.getElementById('spawn-toggle-label').textContent = spawningPaused ? '▶ Resume Building Spawning' : '⏸ Pause Building Spawning'; document.getElementById('spawn-toggle-sub').textContent = spawningPaused ? 'No new 🏡 Towns or 🏢 Jobs' : 'New 🏡 Towns & 🏢 Jobs: ON'; this.style.background = spawningPaused ? 'rgba(231,76,60,0.28)' : 'rgba(46,204,113,0.18)'; this.style.borderColor = spawningPaused ? '#e74c3c' : '#2ecc71'; this.style.color = spawningPaused ? '#e74c3c' : '#2ecc71';"
+            style="background: rgba(46,204,113,0.18); border: 1.5px solid #2ecc71; color: #2ecc71; padding: 5px 13px; border-radius: 9px; cursor: pointer; font-weight: 700; white-space: nowrap; transition: all 0.15s; display: flex; flex-direction: column; align-items: center; gap: 2px;"
+            title="Toggle automatic spawning of new Towns &amp; Jobs">
+            <span id="spawn-toggle-label" style="font-size: 12.5px;">⏸ Pause Building Spawning</span>
+            <span id="spawn-toggle-sub" style="font-size: 10.5px; opacity: 0.8; font-weight: 600;">New 🏡 Towns &amp; 🏢 Jobs: ON</span>
+        </button>
     </div>
 
     <div id="toolbar">
@@ -416,6 +423,7 @@
         let mousePos = { x: 0, y: 0 };
         let spawnMultiplier = 5;
         let nextHubTimer = 0;
+        let spawningPaused = false;
         let upkeepTimer = 0;
         let showHeatmap = false;
         let completedTrips = 0;
@@ -818,6 +826,25 @@
             return { count: downgradedCount, refund: totalRefund };
         }
 
+        // Clears stale intersection state from all cars that were reacting to a node
+        // whose type just changed (e.g. stopsign -> signal). Must be called immediately
+        // after any node.type mutation so cars re-evaluate from a clean slate.
+        function resetCarsAtNode(node) {
+            node.crossingCar = null;
+            node.signalState = null;
+            node.signalTimer = 0;
+            cars.forEach(car => {
+                if (car.nextNode === node || car.currentNode === node) {
+                    car.stoppedAtStopSign = false;
+                    car.crossingIntersection = false;
+                    car.waitTimer = 0;
+                    car.stopTimer = 0;
+                    car.stoppedFrames = 0;
+                    if (car.speed < 0.3) car.speed = 0.5;
+                }
+            });
+        }
+
         function updateNodeTypes() {
             nodes.forEach(n => {
                 let isHub = hubs.some(h => h.x === n.x && h.y === n.y);
@@ -827,10 +854,10 @@
                 }
                 if (n.type === 'signal' || n.type === 'roundabout') return;
                 let connectedEdges = edges.filter(e => e.from === n || e.to === n);
-                if (connectedEdges.length >= 3) {
-                    n.type = 'stopsign';
-                } else {
-                    n.type = 'none';
+                let newType = connectedEdges.length >= 3 ? 'stopsign' : 'none';
+                if (n.type !== newType) {
+                    n.type = newType;
+                    resetCarsAtNode(n);
                 }
             });
         }
@@ -1011,6 +1038,26 @@
         setInterval(() => {
             hubs.forEach(h => {
                 if (h.timer > 0) h.timer--;
+
+                // Reset unconnected counter when hub is connected to road network
+                let connected = isHubConnected(h);
+                if (connected) {
+                    h.unconnectedCycles = 0;
+                }
+
+                // Dynamically verify if driveway is physically blocked by stationary cars
+                let hubNode = nodes.find(n => n.x === h.x && n.y === h.y);
+                if (hubNode) {
+                    let isDrivewayBlocked = cars.some(c => {
+                        let onHubNode = (c.currentNode === hubNode || c.nextNode === hubNode);
+                        return onHubNode && Math.hypot(c.x - h.x, c.y - h.y) < 36 && c.speed < 0.6;
+                    });
+                    if (!isDrivewayBlocked) {
+                        h.blockedCycles = 0;
+                    }
+                } else {
+                    h.blockedCycles = 0;
+                }
             });
 
             nodes.forEach(n => {
@@ -1030,14 +1077,33 @@
                     let nsMaxLanes = nsEdges.reduce((max, e) => Math.max(max, ROAD_TYPES[e.type]?.lanesPerDir || 1), 1);
                     let ewMaxLanes = ewEdges.reduce((max, e) => Math.max(max, ROAD_TYPES[e.type]?.lanesPerDir || 1), 1);
 
-                    // Dynamic green phase duration based on road hierarchy: Local = 3s, Avenue = 6s, Highway = 9s
-                    let nsDuration = nsMaxLanes === 3 ? 9 : (nsMaxLanes === 2 ? 6 : 3);
-                    let ewDuration = ewMaxLanes === 3 ? 9 : (ewMaxLanes === 2 ? 6 : 3);
+                    // Dynamic green phase duration based on road hierarchy
+                    let nsDuration = (nsMaxLanes === 3 ? 9 : (nsMaxLanes === 2 ? 6 : 4));
+                    let ewDuration = (ewMaxLanes === 3 ? 9 : (ewMaxLanes === 2 ? 6 : 4));
+                    let yellowDuration = 2; // 2 seconds yellow clearance to prevent mid-intersection trapping
 
-                    let currentLimit = (n.signalState === 'NS_GREEN') ? nsDuration : ewDuration;
-                    if (n.signalTimer >= currentLimit) {
-                        n.signalState = (n.signalState === 'NS_GREEN') ? 'EW_GREEN' : 'NS_GREEN';
-                        n.signalTimer = 0;
+                    if (!n.signalState) n.signalState = 'NS_GREEN';
+
+                    if (n.signalState === 'NS_GREEN') {
+                        if (n.signalTimer >= nsDuration) {
+                            n.signalState = 'NS_YELLOW';
+                            n.signalTimer = 0;
+                        }
+                    } else if (n.signalState === 'NS_YELLOW') {
+                        if (n.signalTimer >= yellowDuration) {
+                            n.signalState = 'EW_GREEN';
+                            n.signalTimer = 0;
+                        }
+                    } else if (n.signalState === 'EW_GREEN') {
+                        if (n.signalTimer >= ewDuration) {
+                            n.signalState = 'EW_YELLOW';
+                            n.signalTimer = 0;
+                        }
+                    } else if (n.signalState === 'EW_YELLOW') {
+                        if (n.signalTimer >= yellowDuration) {
+                            n.signalState = 'NS_GREEN';
+                            n.signalTimer = 0;
+                        }
                     }
                 }
             });
@@ -1371,6 +1437,9 @@
                         addFloatingText(target.x, target.y - 15, 'Cannot build on Buildings!', '#e74c3c');
                     } else if (target.type !== 'signal') {
                         target.type = 'signal';
+                        target.signalState = 'NS_GREEN';
+                        target.signalTimer = 0;
+                        resetCarsAtNode(target);
                         budget -= 300;
                         addFloatingText(target.x, target.y - 15, '-$300', '#e74c3c');
                         updateUI();
@@ -1384,6 +1453,7 @@
                         addFloatingText(target.x, target.y - 15, 'Cannot build on Buildings!', '#e74c3c');
                     } else if (target.type !== 'roundabout') {
                         target.type = 'roundabout';
+                        resetCarsAtNode(target);
                         budget -= 600;
                         addFloatingText(target.x, target.y - 15, '-$600', '#e74c3c');
                         updateUI();
@@ -1597,14 +1667,16 @@
         }
 
         setInterval(() => {
-            nextHubTimer++;
-            if (nextHubTimer >= 15) {
-                nextHubTimer = 0;
-                let margin = 160;
-                for (let attempt = 0; attempt < 10; attempt++) {
-                    let rx = snap(margin + Math.random() * (WORLD_WIDTH - margin * 2), WORLD_WIDTH);
-                    let ry = snap(margin + Math.random() * (WORLD_HEIGHT - margin * 2), WORLD_HEIGHT);
-                    if (createHub(rx, ry, Math.random() > 0.4, 20)) break;
+            if (!spawningPaused) {
+                nextHubTimer++;
+                if (nextHubTimer >= 15) {
+                    nextHubTimer = 0;
+                    let margin = 160;
+                    for (let attempt = 0; attempt < 10; attempt++) {
+                        let rx = snap(margin + Math.random() * (WORLD_WIDTH - margin * 2), WORLD_WIDTH);
+                        let ry = snap(margin + Math.random() * (WORLD_HEIGHT - margin * 2), WORLD_HEIGHT);
+                        if (createHub(rx, ry, Math.random() > 0.4, 20)) break;
+                    }
                 }
             }
 
@@ -1615,12 +1687,18 @@
             let timeInfo = getGameTimeInfo();
             let spawnBatchCount = Math.max(1, Math.round(spawnMultiplier * timeInfo.rushMultiplier));
             let spawnedThisTick = new Set();
+            let now = Date.now();
 
             for (let i = 0; i < spawnBatchCount; i++) {
                 // Determine direction based on day/night rush cycles
                 let isToJob = Math.random() < timeInfo.toJobProbability;
                 let startOriginHub = isToJob ? spawns[Math.floor(Math.random() * spawns.length)] : jobTargets[Math.floor(Math.random() * jobTargets.length)];
                 let destinationHub = isToJob ? jobTargets[Math.floor(Math.random() * jobTargets.length)] : spawns[Math.floor(Math.random() * spawns.length)];
+
+                // Minimum 1.6s cooldown per individual building to prevent burst spawning into its own driveway
+                if (startOriginHub.lastSpawnTime && (now - startOriginHub.lastSpawnTime < 1600)) {
+                    continue;
+                }
 
                 let startNode = nodes.find(n => n.x === startOriginHub.x && n.y === startOriginHub.y);
                 let endNode = nodes.find(n => n.x === destinationHub.x && n.y === destinationHub.y);
@@ -1631,14 +1709,12 @@
                         let edge = edges.find(e => (e.from === path[0] && e.to === path[1]) || (e.to === path[0] && e.from === path[1]));
                         let afterNode = path.length > 2 ? path[2] : null;
                         let assignedLane = edge ? selectBestLane(path[0], path[1], edge, null, null) : 0;
-                        // One car per hub per tick — prevents burst-spawning from the same building
                         let spawnKey = `${startOriginHub.id}`;
 
                         // Prevent multiple cars from attempting to spawn in the exact same lane in the same tick
                         if (spawnedThisTick.has(spawnKey)) {
                             continue;
                         }
-
 
                         let dx0 = path[1].x - path[0].x;
                         let dy0 = path[1].y - path[0].y;
@@ -1649,14 +1725,17 @@
                         let startX = path[0].x + (-dirY0 * laneOffset0);
                         let startY = path[0].y + (dirX0 * laneOffset0);
 
-                        // Only count as blocked if another car is stopped/crawling at the driveway (< 0.6 speed)
+                        // Only count as blocked if another car on the road is stationary/stalled (< 0.25 speed)
                         let isBlocked = cars.some(c => {
                             let sameSegment = (c.currentNode === path[0] && c.nextNode === path[1]);
-                            return sameSegment && c.lane === assignedLane && Math.hypot(c.x - startX, c.y - startY) < 26 && c.speed < 0.6;
+                            let isVerySlow = c.speed < 0.25;
+                            let isNearby = Math.hypot(c.x - startX, c.y - startY) < 20;
+                            return sameSegment && c.lane === assignedLane && isNearby && isVerySlow;
                         });
 
                         if (!isBlocked) {
                             startOriginHub.blockedCycles = 0;
+                            startOriginHub.lastSpawnTime = now;
                             spawnedThisTick.add(spawnKey);
                             let initialSpeed = edge ? Math.min(1.4, ROAD_TYPES[edge.type].speedLimit * 0.7) : 1.2;
 
@@ -1689,11 +1768,11 @@
                                 laneChangeCooldown: 0
                             });
                         } else {
-                            failedTrips++;
                             startOriginHub.blockedCycles = (startOriginHub.blockedCycles || 0) + 1;
-                            if (startOriginHub.blockedCycles >= 5) {
+                            if (startOriginHub.blockedCycles >= 8) {
                                 startOriginHub.jamFlash = 50;
                                 if (startOriginHub.blockedCycles % 4 === 0) {
+                                    failedTrips++;
                                     budget -= 50;
                                     addFloatingText(startOriginHub.x, startOriginHub.y - 20, '-$50 EXIT JAMMED!', '#ff4757');
                                     updateUI();
@@ -2052,7 +2131,7 @@
                 }
 
                 let stopRequired = false;
-                let stopLineDist = 18;
+                let stopLineDist = 13;
 
                 // Intersection approach turn-lane enforcement:
                 // Only switch if the vehicle's current lane is illegal for its upcoming turn,
@@ -2078,8 +2157,14 @@
                     }
                 }
 
+                // Distance from current node (how far vehicle has progressed along current segment)
+                let distFromCurNode = Math.hypot(car.x - car.currentNode.x, car.y - car.currentNode.y);
+
+                // Vehicle is clearing the previous junction if it is executing turnPath or is within 22px of currentNode
+                let clearingCurrentNode = (car.turnPath && car.turnPath.length > 0) || (distFromCurNode < 22);
+
                 // Yield to circulating traffic and seamlessly merge when approaching a roundabout
-                if (car.nextNode.type === 'roundabout') {
+                if (car.nextNode.type === 'roundabout' && !clearingCurrentNode) {
                     let rNode = car.nextNode;
                     let specs = getRoundaboutSpecs(rNode);
                     let targetLane = car.lane % specs.lanes;
@@ -2122,96 +2207,225 @@
                     }
                 }
 
-                if (car.nextNode.type === 'stopsign' && !car.stoppedAtStopSign) {
-                    if (distToTargetNode < 45) {
-                        stopRequired = true;
-                        if (distToTargetNode <= stopLineDist + 3) {
-                            car.speed = 0;
-                            car.stopTimer++;
-                            if (car.stopTimer > 12) {
-                                car.stoppedAtStopSign = true;
-                                car.waitTimer = 0;
-                                stopRequired = false;
-                            }
-                        } else {
-                            let targetDecelSpeed = Math.max(0.3, ((distToTargetNode - stopLineDist) / 27) * roadStyle.speedLimit);
-                            if (car.speed < targetDecelSpeed) {
-                                car.speed = Math.min(targetDecelSpeed, car.speed + 0.08);
+                // --- Stop Sign Approach & Clearance Logic ---
+                if (car.nextNode.type === 'stopsign' && !clearingCurrentNode) {
+                    if (!car.stoppedAtStopSign && !car.crossingIntersection) {
+                        if (distToTargetNode < 45) {
+                            stopRequired = true;
+                            if (distToTargetNode <= stopLineDist + 2) {
+                                car.speed = 0;
+                                car.stopTimer++;
+                                if (car.stopTimer > 8) {
+                                    car.stoppedAtStopSign = true;
+                                    car.waitTimer = 0;
+                                    stopRequired = false;
+                                }
                             } else {
-                                car.speed = Math.max(targetDecelSpeed, car.speed - 0.2);
-                            }
-                        }
-                    }
-                }
-
-                if (car.nextNode.type === 'signal') {
-                    let isNorthSouth = Math.abs(dy) > Math.abs(dx);
-                    let greenActive = isNorthSouth ? (car.nextNode.signalState === 'NS_GREEN') : (car.nextNode.signalState === 'EW_GREEN');
-                    if (!greenActive && distToTargetNode < 50) {
-                        stopRequired = true;
-                        if (distToTargetNode <= stopLineDist + 3) {
-                            car.speed = 0;
-                        } else {
-                            let targetDecelSpeed = Math.max(0.3, ((distToTargetNode - stopLineDist) / 32) * roadStyle.speedLimit);
-                            if (car.speed < targetDecelSpeed) {
-                                car.speed = Math.min(targetDecelSpeed, car.speed + 0.08);
-                            } else {
-                                car.speed = Math.max(targetDecelSpeed, car.speed - 0.2);
-                            }
-                        }
-                    }
-                }
-
-                // ── Stop-sign token-based priority ────────────────────────────────
-                // Once a car has fully stopped (stoppedAtStopSign=true) it competes
-                // for the intersection's crossing token (node.crossingCar).
-                // Only the token-holder may proceed; all others queue.
-                // A waitTimer failsafe forces a stalled car through after 120 frames.
-                if (car.nextNode.type === 'stopsign' && car.stoppedAtStopSign && !car.crossingIntersection) {
-                    let snode = car.nextNode;
-                    // Release stale token if that car is gone or has moved on
-                    if (snode.crossingCar && snode.crossingCar !== car) {
-                        let holder = snode.crossingCar;
-                        let holderGone = !cars.includes(holder) ||
-                            holder.currentNode === snode ||
-                            holder.nextNode !== snode;
-                        if (holderGone) snode.crossingCar = null;
-                    }
-
-                    // Try to claim the token
-                    if (!snode.crossingCar) {
-                        // Find the car at this stop sign with the highest stopTimer (longest wait)
-                        let bestCar = car;
-                        for (let k = 0; k < cars.length; k++) {
-                            let other = cars[k];
-                            if (other === car) continue;
-                            if (other.nextNode === snode && other.stoppedAtStopSign && !other.crossingIntersection) {
-                                if (other.stopTimer > bestCar.stopTimer ||
-                                    (other.stopTimer === bestCar.stopTimer && k < cars.indexOf(car))) {
-                                    bestCar = other;
+                                let targetDecelSpeed = Math.max(0.3, ((distToTargetNode - stopLineDist) / 24) * roadStyle.speedLimit);
+                                if (car.speed < targetDecelSpeed) {
+                                    car.speed = Math.min(targetDecelSpeed, car.speed + 0.08);
+                                } else {
+                                    car.speed = Math.max(targetDecelSpeed, car.speed - 0.2);
                                 }
                             }
                         }
-                        if (bestCar === car) {
-                            snode.crossingCar = car; // Claim token
-                        }
                     }
 
-                    // Increment waitTimer while stopped-and-ready; failsafe after 120 frames
-                    car.waitTimer = (car.waitTimer || 0) + 1;
-                    if (snode.crossingCar !== car && car.waitTimer < 120) {
+                    // ── Stop-sign token-based priority ────────────────────────────────
+                    if (car.stoppedAtStopSign && !car.crossingIntersection) {
+                        let snode = car.nextNode;
+                        // Release stale token if holder car no longer exists or has moved past snode
+                        if (snode.crossingCar && snode.crossingCar !== car) {
+                            let holder = snode.crossingCar;
+                            let holderGone = !cars.includes(holder) ||
+                                (holder.currentNode !== snode && holder.nextNode !== snode) ||
+                                Math.hypot(holder.x - snode.x, holder.y - snode.y) > 22;
+                            if (holderGone) snode.crossingCar = null;
+                        }
+
+                        // Check if any car is actively inside or clearing through the junction throat
+                        let isCrossingActive = cars.some(other => {
+                            if (other === car) return false;
+                            let nearSnode = Math.hypot(other.x - snode.x, other.y - snode.y) < 22;
+                            return nearSnode && (other.crossingIntersection || other.turnPath || other.currentNode === snode);
+                        });
+
+                        // Try to claim the token if intersection is not occupied
+                        if (!snode.crossingCar && !isCrossingActive) {
+                            let bestCar = car;
+                            for (let k = 0; k < cars.length; k++) {
+                                let other = cars[k];
+                                if (other === car) continue;
+                                if (other.nextNode === snode && other.stoppedAtStopSign && !other.crossingIntersection) {
+                                    if (other.stopTimer > bestCar.stopTimer ||
+                                        (other.stopTimer === bestCar.stopTimer && (other.waitTimer || 0) > (bestCar.waitTimer || 0))) {
+                                        bestCar = other;
+                                    }
+                                }
+                            }
+                            if (bestCar === car) {
+                                snode.crossingCar = car;
+                                car.crossingIntersection = true;
+                                car.stoppedAtStopSign = false;
+                                stopRequired = false;
+                            }
+                        }
+
+                        car.waitTimer = (car.waitTimer || 0) + 1;
+                        if (!car.crossingIntersection) {
+                            stopRequired = true;
+                            car.speed = 0;
+                            // Deadlock failsafe: if waiting over 30 frames and junction throat is clear
+                            if (car.waitTimer > 30 && !isCrossingActive) {
+                                snode.crossingCar = car;
+                                car.crossingIntersection = true;
+                                car.stoppedAtStopSign = false;
+                                stopRequired = false;
+                            }
+                        }
+                    }
+                }
+
+                // Determine if upcoming node is a true intersection/junction (3+ connecting roads, signal, stop sign, or roundabout)
+                let isJunction = (car.nextNode.type === 'signal' || car.nextNode.type === 'stopsign' || car.nextNode.type === 'roundabout') ||
+                    edges.filter(e => e.from === car.nextNode || e.to === car.nextNode).length >= 3;
+
+                // --- Traffic Signal Approach & Clearance Logic ---
+                if (car.nextNode.type === 'signal' && !clearingCurrentNode) {
+                    let isNorthSouth = Math.abs(dy) > Math.abs(dx);
+                    let sigState = car.nextNode.signalState || 'NS_GREEN';
+                    let isGreen = isNorthSouth ? (sigState === 'NS_GREEN') : (sigState === 'EW_GREEN');
+                    let isYellow = isNorthSouth ? (sigState === 'NS_YELLOW') : (sigState === 'EW_YELLOW');
+
+                    // If car has crossed stop line, has turnPath, or is already in intersection, COMMIT & CLEAR (do not stop mid-intersection)
+                    let committedToIntersection = car.crossingIntersection || (car.turnPath && car.turnPath.length > 0) || (distToTargetNode < stopLineDist - 1);
+
+                    if (!committedToIntersection) {
+                        if (isGreen) {
+                            // Green light: proceed normally
+                            stopRequired = false;
+                        } else if (isYellow) {
+                            // Yellow light: if close and moving, proceed through; otherwise brake smoothly
+                            if (distToTargetNode < 26 && car.speed > 0.6) {
+                                stopRequired = false;
+                            } else if (distToTargetNode < 45) {
+                                stopRequired = true;
+                                if (distToTargetNode <= stopLineDist + 2) {
+                                    car.speed = 0;
+                                } else {
+                                    let targetDecelSpeed = Math.max(0.35, ((distToTargetNode - stopLineDist) / 24) * roadStyle.speedLimit);
+                                    if (car.speed > targetDecelSpeed) car.speed = Math.max(targetDecelSpeed, car.speed - 0.15);
+                                }
+                            }
+                        } else {
+                            // Red light: stop cleanly before stop line
+                            if (distToTargetNode < 50) {
+                                stopRequired = true;
+                                if (distToTargetNode <= stopLineDist + 2) {
+                                    car.speed = 0;
+                                } else {
+                                    let targetDecelSpeed = Math.max(0.35, ((distToTargetNode - stopLineDist) / 28) * roadStyle.speedLimit);
+                                    if (car.speed > targetDecelSpeed) car.speed = Math.max(targetDecelSpeed, car.speed - 0.18);
+                                }
+                            }
+                        }
+                    } else {
+                        // Committed to clearing intersection: ensure non-zero speed
+                        stopRequired = false;
+                    }
+                }
+
+                // --- Destination Road Clearance & Anti-Gridlock ("Don't Block the Box") Protocol ---
+                // Only enforced at true intersections where gridlock can block cross traffic
+                let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+
+                if (isJunction && !clearingCurrentNode && !car.turnPath && distToTargetNode < 50 && distToTargetNode >= stopLineDist - 2) {
+                    let destHasRoom = true;
+
+                    if (nextNextNode) {
+                        let destEdge = edges.find(e => (e.from === car.nextNode && e.to === nextNextNode) || (e.from === nextNextNode && e.to === car.nextNode));
+                        let afterDest = (car.path && car.pathIdx + 3 < car.path.length) ? car.path[car.pathIdx + 3] : null;
+                        let targetOutLane = destEdge ? selectBestLane(car.nextNode, nextNextNode, destEdge, afterDest, null) : car.lane;
+
+                        for (let k = 0; k < cars.length; k++) {
+                            if (i === k) continue;
+                            let other = cars[k];
+
+                            // Case A: Car already on the destination road segment
+                            if (other.currentNode === car.nextNode && other.nextNode === nextNextNode && other.lane === targetOutLane) {
+                                let distFromJunction = Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y);
+                                if (distFromJunction < 22 && other.speed < 0.3) {
+                                    destHasRoom = false;
+                                    break;
+                                }
+                            }
+                        }
+                    } else if (car.nextNode === car.targetHubNode) {
+                        // Destination is final hub driveway: check if driveway is clogged
+                        let hubBlocked = cars.some(other => {
+                            if (other === car) return false;
+                            return Math.hypot(other.x - car.nextNode.x, other.y - car.nextNode.y) < 18 && other.speed < 0.2;
+                        });
+                        if (hubBlocked) destHasRoom = false;
+                    }
+
+                    if (!destHasRoom) {
                         stopRequired = true;
-                        car.speed = 0;
-                    } else if (car.waitTimer >= 120) {
-                        // Deadlock failsafe: force token claim and proceed
-                        snode.crossingCar = car;
+                        if (distToTargetNode <= stopLineDist + 2) {
+                            car.speed = 0;
+                        } else {
+                            let targetDecelSpeed = Math.max(0.35, ((distToTargetNode - stopLineDist) / 28) * roadStyle.speedLimit);
+                            if (car.speed > targetDecelSpeed) car.speed = Math.max(targetDecelSpeed, car.speed - 0.15);
+                        }
+                    }
+                }
+
+                // --- Intersection Box Occupancy Yield Check ---
+                // Before entering an intersection, yield to any vehicle actively turning or crossing inside the box.
+                // Runs for all intersection approaches before the vehicle crosses the stop line.
+                // NOTE: Does NOT block vehicles that have been granted stop-sign tokens or cars waiting behind opposing stop lines.
+                if (isJunction && !clearingCurrentNode && !car.turnPath && distToTargetNode >= stopLineDist - 2 && distToTargetNode < 45) {
+                    let targetJunctionNode = car.nextNode;
+                    let isStopSignTokenHolder = (targetJunctionNode.type === 'stopsign' && targetJunctionNode.crossingCar === car);
+
+                    if (!isStopSignTokenHolder) {
+                        let junctionOccupied = cars.some(other => {
+                            if (other === car) return false;
+
+                            // 1. Another vehicle actively executing a turn path across this junction
+                            if (other.turnPath && other.turnPath.length > 0) {
+                                return Math.hypot(other.x - targetJunctionNode.x, other.y - targetJunctionNode.y) < 24;
+                            }
+
+                            // 2. Another vehicle actively clearing or traversing through the junction box
+                            if (other.currentNode === targetJunctionNode) {
+                                return Math.hypot(other.x - targetJunctionNode.x, other.y - targetJunctionNode.y) < 18;
+                            }
+
+                            // 3. Another vehicle that has physically crossed its stop line into the junction
+                            if (other.nextNode === targetJunctionNode && other.crossingIntersection) {
+                                return Math.hypot(other.x - targetJunctionNode.x, other.y - targetJunctionNode.y) < 18;
+                            }
+
+                            return false;
+                        });
+
+                        if (junctionOccupied) {
+                            stopRequired = true;
+                            if (distToTargetNode <= stopLineDist + 2) {
+                                car.speed = 0;
+                            } else {
+                                let targetDecelSpeed = Math.max(0.35, ((distToTargetNode - stopLineDist) / 28) * roadStyle.speedLimit);
+                                if (car.speed > targetDecelSpeed) car.speed = Math.max(targetDecelSpeed, car.speed - 0.15);
+                            }
+                        }
                     }
                 }
 
                 // Vehicle-to-vehicle braking and queuing check
                 let brakeForCar = false;
-                let minFollowGap = 20;
-                let lookaheadDist = minFollowGap + Math.max(20, car.speed * 12);
+                let minFollowGap = 14;
+                let lookaheadDist = minFollowGap + Math.max(14, car.speed * 10);
 
                 for (let j = 0; j < cars.length; j++) {
                     if (i === j) continue;
@@ -2226,8 +2440,8 @@
                                 car.speed = 0;
                                 break;
                             } else {
-                                let gapRatio = (forwardDist - minFollowGap) / (lookaheadDist - minFollowGap);
-                                let approachSpeed = Math.max(0.2, gapRatio * roadStyle.speedLimit);
+                                let gapRatio = Math.max(0, (forwardDist - minFollowGap) / (lookaheadDist - minFollowGap));
+                                let approachSpeed = Math.max(0.25, Math.pow(gapRatio, 0.75) * roadStyle.speedLimit);
                                 if (other.speed > 0) {
                                     car.speed = Math.min(car.speed, Math.max(other.speed, approachSpeed));
                                 } else {
@@ -2236,11 +2450,10 @@
                             }
                         }
                     }
-                    // Case 3: Outbound lane clearance
-                    let nextNextNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
+                    // Case 3: Outbound lane clearance - only if other car is actually stopped/crawling
                     if (nextNextNode && other.currentNode === car.nextNode && other.nextNode === nextNextNode && other.lane === car.lane) {
                         let dist = Math.hypot(other.x - car.x, other.y - car.y);
-                        if (dist < minFollowGap + 4) {
+                        if (dist < minFollowGap + 2 && other.speed < 0.3) {
                             brakeForCar = true;
                             car.speed = 0;
                             break;
@@ -2248,23 +2461,37 @@
                     }
                 }
 
-                // Center-clip guard: stop only when one car's center is literally
-                // inside another car (center-to-center < 7px, half a car body).
-                // Allows a small natural overlap but prevents full stacking.
-                // Skips: opposing-direction traffic (different road halves),
-                //        and cars executing turn paths (legitimately crossing intersection space).
-                if (!brakeForCar && !car.turnPath) {
-                    let myDirX = Math.cos(car.angle);
-                    let myDirY = Math.sin(car.angle);
+                // Lateral Collision & Center-Clip Guard with Asymmetric Right-of-Way Resolution:
+                // Prevents mutual deadlocks when two cars meet perpendicularly or diagonally in an intersection
+                if (!brakeForCar) {
+                    let myDirX = Math.cos(car.angle || 0);
+                    let myDirY = Math.sin(car.angle || 0);
+
                     for (let j = 0; j < cars.length; j++) {
                         if (i === j) continue;
                         let other = cars[j];
-                        if (other.turnPath) continue; // other car is mid-turn, let it pass
-                        if (Math.hypot(other.x - car.x, other.y - car.y) < 7) {
-                            let otherDirX = Math.cos(other.angle);
-                            let otherDirY = Math.sin(other.angle);
-                            // Skip if genuinely opposing traffic (different road halves)
-                            if (myDirX * otherDirX + myDirY * otherDirY > -0.3) {
+                        let dist = Math.hypot(other.x - car.x, other.y - car.y);
+
+                        if (dist < 9) {
+                            let otherDirX = Math.cos(other.angle || 0);
+                            let otherDirY = Math.sin(other.angle || 0);
+                            let dot = myDirX * otherDirX + myDirY * otherDirY;
+
+                            // Skip opposing traffic on straight road (different road halves)
+                            if (dot < -0.4 && !car.turnPath && !other.turnPath) continue;
+
+                            // Asymmetric tie-breaking: one car drives through while the other yields
+                            let carScore = (car.turnPath ? 100 : 0) + (car.crossingIntersection ? 50 : 0) + (car.speed > 0.4 ? 20 : 0) + (cars.length - i);
+                            let otherScore = (other.turnPath ? 100 : 0) + (other.crossingIntersection ? 50 : 0) + (other.speed > 0.4 ? 20 : 0) + (cars.length - j);
+
+                            if (carScore >= otherScore) {
+                                // Priority vehicle: drive through and ignore lateral interference
+                                car.speed = Math.max(car.speed, 0.85);
+                                brakeForCar = false;
+                                stopRequired = false;
+                                break;
+                            } else {
+                                // Yielding vehicle: pause until priority vehicle clears
                                 brakeForCar = true;
                                 car.speed = 0;
                                 break;
@@ -2273,35 +2500,45 @@
                     }
                 }
 
-                // Dynamic overtaking: only if stuck behind slow/stopped traffic for multiple seconds
-                car.laneChangeCooldown = Math.max(0, (car.laneChangeCooldown || 0) - 1);
-                if (brakeForCar && car.speed < 0.3) {
-                    car.stuckInLaneFrames = (car.stuckInLaneFrames || 0) + 1;
+                // Universal Anti-Stall Failsafe:
+                // If car is stationary for > 15 frames, verify road ahead and resume driving
+                if (car.speed < 0.2) {
+                    car.stoppedFrames = (car.stoppedFrames || 0) + 1;
                 } else {
-                    car.stuckInLaneFrames = 0;
+                    car.stoppedFrames = 0;
                 }
 
-                if (car.stuckInLaneFrames > 45 && roadStyle.lanesPerDir > 1 && !car.turnPath && distToTargetNode > 60 && car.laneChangeCooldown === 0) {
-                    let afterNode = (car.path && car.pathIdx + 2 < car.path.length) ? car.path[car.pathIdx + 2] : null;
-                    let allowed = getAllowedLanes(car.currentNode, car.nextNode, edge, afterNode);
-                    if (allowed.length > 1) {
-                        for (let candLane of allowed) {
-                            if (candLane === car.lane) continue;
-                            let laneDistOffset = (candLane - car.lane) * 7;
-                            let candX = car.x + rightNx * laneDistOffset;
-                            let candY = car.y + rightNy * laneDistOffset;
-                            let laneClear = !cars.some(other => {
-                                if (other === car) return false;
-                                let onSameSeg = (other.currentNode === car.currentNode && other.nextNode === car.nextNode && other.lane === candLane);
-                                return onSameSeg && Math.hypot(other.x - candX, other.y - candY) < 28;
-                            });
-                            if (laneClear) {
-                                car.lane = candLane;
-                                car.laneChangeCooldown = 180; // 3 second cooldown
-                                car.stuckInLaneFrames = 0;
-                                brakeForCar = false;
-                                break;
-                            }
+                if (car.stoppedFrames > 15) {
+                    let myAngle = car.angle || 0;
+                    let fwdX = Math.cos(myAngle);
+                    let fwdY = Math.sin(myAngle);
+
+                    let directBlocker = cars.find(other => {
+                        if (other === car) return false;
+                        let ox = other.x - car.x;
+                        let oy = other.y - car.y;
+                        let fwdProj = ox * fwdX + oy * fwdY;
+                        let sideProj = Math.abs(-fwdY * ox + fwdX * oy);
+                        return fwdProj > 0 && fwdProj < 15 && sideProj < 5.5;
+                    });
+
+                    if (!directBlocker && !stopRequired) {
+                        car.speed = Math.max(0.65, car.speed);
+                        brakeForCar = false;
+                    } else if (!directBlocker && !isJunction) {
+                        // On a straight non-junction road with no car in front, ALWAYS resume!
+                        car.speed = Math.max(0.65, car.speed);
+                        stopRequired = false;
+                        brakeForCar = false;
+                    } else if (directBlocker) {
+                        // If lateral jam (touching at dist < 10), resolve by priority
+                        let blockerDist = Math.hypot(directBlocker.x - car.x, directBlocker.y - car.y);
+                        let directBlockerIdx = cars.indexOf(directBlocker);
+                        if (blockerDist < 10 && (car.stoppedFrames > (directBlocker.stoppedFrames || 0) || i < directBlockerIdx)) {
+                            car.speed = 0.85;
+                            stopRequired = false;
+                            brakeForCar = false;
+                            car.crossingIntersection = true;
                         }
                     }
                 }
@@ -2318,6 +2555,8 @@
                     car.currentNode = car.nextNode;
                     car.pathIdx++;
                     if (car.currentNode === car.targetHubNode || car.pathIdx >= car.path.length - 1) {
+                        if (oldFromNode?.crossingCar === car) oldFromNode.crossingCar = null;
+                        if (car.currentNode?.crossingCar === car) car.currentNode.crossingCar = null;
                         cars.splice(i, 1);
                         completedTrips++;
                         budget += 25;
@@ -2358,13 +2597,17 @@
                         }
 
                         // Release stop-sign crossing token when car advances past node
-                        if (car.currentNode.crossingCar === car) {
+                        if (oldFromNode?.crossingCar === car) {
+                            oldFromNode.crossingCar = null;
+                        }
+                        if (car.currentNode?.crossingCar === car) {
                             car.currentNode.crossingCar = null;
                         }
                         car.stoppedAtStopSign = false;
                         car.crossingIntersection = false;
                         car.stopTimer = 0;
                         car.waitTimer = 0;
+                        car.stoppedFrames = 0;
                     }
                 } else if (car.speed > 0) {
                     let moveX = (targetX - car.x) / (distToTarget || 1);
@@ -2380,7 +2623,7 @@
             ctx.save();
             let hubNum = h.hubNumber || h.id;
 
-            let isJammed = h.isSpawn && ((h.blockedCycles && h.blockedCycles >= 5) || (h.jamFlash && h.jamFlash > 0));
+            let isJammed = ((h.blockedCycles && h.blockedCycles >= 5) || (h.jamFlash && h.jamFlash > 0));
 
             // Pulsing Emergency Warning Ripple for Jammed Buildings
             if (isJammed) {
@@ -2752,115 +2995,223 @@
                 ctx.restore();
             });
 
+            // ==========================================
+            // PASS 1: ALL ROAD PAVEMENT BASES & JUNCTIONS
+            // ==========================================
+            // 1A. Outer Curb / Base Underlay (prevents raw edge clipping and adds depth)
             edges.forEach(e => {
-                let style = ROAD_TYPES[e.type];
-                ctx.strokeStyle = style.color;
-                ctx.lineWidth = style.width;
+                let style = ROAD_TYPES[e.type] || ROAD_TYPES.local;
+                ctx.strokeStyle = '#15191e';
+                ctx.lineWidth = style.width + 3;
                 ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
                 ctx.beginPath();
                 ctx.moveTo(e.from.x, e.from.y);
                 ctx.lineTo(e.to.x, e.to.y);
                 ctx.stroke();
+            });
 
-                let dx = e.to.x - e.from.x;
-                let dy = e.to.y - e.from.y;
-                let len = Math.hypot(dx, dy);
-                if (len > 0) {
+            // 1B. Main Asphalt Surface
+            edges.forEach(e => {
+                let style = ROAD_TYPES[e.type] || ROAD_TYPES.local;
+                ctx.strokeStyle = style.color;
+                ctx.lineWidth = style.width;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(e.from.x, e.from.y);
+                ctx.lineTo(e.to.x, e.to.y);
+                ctx.stroke();
+            });
+
+            // 1C. Seamless Junction Fillet Disks at Nodes
+            nodes.forEach(n => {
+                if (n.type === 'roundabout') return;
+                let connected = edges.filter(e => e.from === n || e.to === n);
+                if (connected.length === 0) return;
+                let maxW = connected.reduce((max, e) => Math.max(max, (ROAD_TYPES[e.type]?.width || 20)), 20);
+                let jointColor = connected[0] ? (ROAD_TYPES[connected[0].type]?.color || '#2c3e50') : '#2c3e50';
+
+                ctx.fillStyle = jointColor;
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, maxW / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // ==========================================
+            // PASS 2: HEATMAP CONGESTION GLOW
+            // ==========================================
+            if (showHeatmap) {
+                edges.forEach(e => {
+                    if (e.congestion <= 3) return;
+                    let style = ROAD_TYPES[e.type] || ROAD_TYPES.local;
+                    let dx = e.to.x - e.from.x;
+                    let dy = e.to.y - e.from.y;
+                    let len = Math.hypot(dx, dy);
+                    if (len === 0) return;
                     let nx = dy / len;
                     let ny = -dx / len;
 
-                    // Heatmap: Multi-layer gradient glow along road edges
-                    if (showHeatmap && e.congestion > 3) {
-                        ctx.save();
-                        let congRatio = Math.min(1.0, e.congestion / 100);
-                        // Rich 5-stop color ramp: green -> lime -> yellow -> orange -> red
-                        let r, g, b;
-                        if (congRatio < 0.25) {
-                            let t = congRatio / 0.25;
-                            r = Math.round(30 + t * 195); g = 220; b = 30;
-                        } else if (congRatio < 0.5) {
-                            let t = (congRatio - 0.25) / 0.25;
-                            r = Math.round(225 + t * 30); g = Math.round(220 - t * 80); b = 0;
-                        } else if (congRatio < 0.75) {
-                            let t = (congRatio - 0.5) / 0.25;
-                            r = 255; g = Math.round(140 - t * 100); b = 0;
-                        } else {
-                            let t = (congRatio - 0.75) / 0.25;
-                            r = 255; g = Math.round(40 - t * 40); b = Math.round(t * 30);
-                        }
-                        let color = `rgb(${r},${g},${b})`;
-                        let baseAlpha = 0.18 + (congRatio * 0.72);
-                        let roadHalfW = style.width / 2;
-
-                        // Layer 1: Wide ambient outer glow (full road width)
-                        ctx.globalCompositeOperation = 'screen';
-                        let gradOuter = ctx.createLinearGradient(
-                            e.from.x - nx * roadHalfW, e.from.y - ny * roadHalfW,
-                            e.from.x + nx * roadHalfW, e.from.y + ny * roadHalfW
-                        );
-                        gradOuter.addColorStop(0, `rgba(${r},${g},${b},0)`);
-                        gradOuter.addColorStop(0.25, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
-                        gradOuter.addColorStop(0.5, `rgba(${r},${g},${b},${baseAlpha * 0.40})`);
-                        gradOuter.addColorStop(0.75, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
-                        gradOuter.addColorStop(1, `rgba(${r},${g},${b},0)`);
-                        ctx.strokeStyle = gradOuter;
-                        ctx.lineWidth = style.width - 2;
-                        ctx.lineCap = 'round';
-                        ctx.beginPath();
-                        ctx.moveTo(e.from.x, e.from.y);
-                        ctx.lineTo(e.to.x, e.to.y);
-                        ctx.stroke();
-
-                        // Layer 2: Medium shoulder strips along both curbs
-                        ctx.globalCompositeOperation = 'source-over';
-                        let shoulderOff = roadHalfW - 2;
-                        ctx.strokeStyle = `rgba(${r},${g},${b},${baseAlpha * 0.45})`;
-                        ctx.lineWidth = 4;
-                        ctx.beginPath();
-                        ctx.moveTo(e.from.x - nx * shoulderOff, e.from.y - ny * shoulderOff);
-                        ctx.lineTo(e.to.x - nx * shoulderOff, e.to.y - ny * shoulderOff);
-                        ctx.moveTo(e.from.x + nx * shoulderOff, e.from.y + ny * shoulderOff);
-                        ctx.lineTo(e.to.x + nx * shoulderOff, e.to.y + ny * shoulderOff);
-                        ctx.stroke();
-
-                        // Layer 3: Crisp bright inner curb line
-                        ctx.strokeStyle = `rgba(${r},${g},${b},${baseAlpha * 0.65})`;
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        ctx.moveTo(e.from.x - nx * shoulderOff, e.from.y - ny * shoulderOff);
-                        ctx.lineTo(e.to.x - nx * shoulderOff, e.to.y - ny * shoulderOff);
-                        ctx.moveTo(e.from.x + nx * shoulderOff, e.from.y + ny * shoulderOff);
-                        ctx.lineTo(e.to.x + nx * shoulderOff, e.to.y + ny * shoulderOff);
-                        ctx.stroke();
-
-                        ctx.globalCompositeOperation = 'source-over';
-                        ctx.restore();
+                    ctx.save();
+                    let congRatio = Math.min(1.0, e.congestion / 100);
+                    let r, g, b;
+                    if (congRatio < 0.25) {
+                        let t = congRatio / 0.25;
+                        r = Math.round(30 + t * 195); g = 220; b = 30;
+                    } else if (congRatio < 0.5) {
+                        let t = (congRatio - 0.25) / 0.25;
+                        r = Math.round(225 + t * 30); g = Math.round(220 - t * 80); b = 0;
+                    } else if (congRatio < 0.75) {
+                        let t = (congRatio - 0.5) / 0.25;
+                        r = 255; g = Math.round(140 - t * 100); b = 0;
+                    } else {
+                        let t = (congRatio - 0.75) / 0.25;
+                        r = 255; g = Math.round(40 - t * 40); b = Math.round(t * 30);
                     }
+                    let baseAlpha = 0.18 + (congRatio * 0.72);
+                    let roadHalfW = style.width / 2;
 
-                    ctx.strokeStyle = style.line;
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash(e.type === 'highway' ? [12, 6] : [6, 6]);
+                    ctx.globalCompositeOperation = 'screen';
+                    let gradOuter = ctx.createLinearGradient(
+                        e.from.x - nx * roadHalfW, e.from.y - ny * roadHalfW,
+                        e.from.x + nx * roadHalfW, e.from.y + ny * roadHalfW
+                    );
+                    gradOuter.addColorStop(0, `rgba(${r},${g},${b},0)`);
+                    gradOuter.addColorStop(0.25, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
+                    gradOuter.addColorStop(0.5, `rgba(${r},${g},${b},${baseAlpha * 0.40})`);
+                    gradOuter.addColorStop(0.75, `rgba(${r},${g},${b},${baseAlpha * 0.28})`);
+                    gradOuter.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                    ctx.strokeStyle = gradOuter;
+                    ctx.lineWidth = style.width - 2;
+                    ctx.lineCap = 'round';
                     ctx.beginPath();
                     ctx.moveTo(e.from.x, e.from.y);
                     ctx.lineTo(e.to.x, e.to.y);
                     ctx.stroke();
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.restore();
+                });
+            }
 
-                    if (style.lanesPerDir > 1) {
-                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-                        ctx.lineWidth = 1;
-                        ctx.setLineDash([4, 4]);
+            // ==========================================
+            // PASS 3: CRISP ROAD STRIPING & MARKINGS
+            // ==========================================
+            edges.forEach(e => {
+                let style = ROAD_TYPES[e.type] || ROAD_TYPES.local;
+                let dx = e.to.x - e.from.x;
+                let dy = e.to.y - e.from.y;
+                let len = Math.hypot(dx, dy);
+                if (len <= 4) return;
 
-                        for (let dir = -1; dir <= 1; dir += 2) {
-                            for (let l = 1; l < style.lanesPerDir; l++) {
-                                let offset = dir * (7 * l);
-                                ctx.beginPath();
-                                ctx.moveTo(e.from.x + nx * offset, e.from.y + ny * offset);
-                                ctx.lineTo(e.to.x + nx * offset, e.to.y + ny * offset);
-                                ctx.stroke();
-                            }
+                let dirX = dx / len;
+                let dirY = dy / len;
+                let nx = -dirY;
+                let ny = dirX;
+
+                // Determine intersection setbacks at endpoints so markings don't overlap inside junctions
+                let fromDegree = edges.filter(ed => ed.from === e.from || ed.to === e.from).length;
+                let toDegree = edges.filter(ed => ed.from === e.to || ed.to === e.to).length;
+
+                let fromIsIntersection = (e.from.type === 'stopsign' || e.from.type === 'signal' || e.from.type === 'roundabout' || fromDegree >= 3);
+                let toIsIntersection = (e.to.type === 'stopsign' || e.to.type === 'signal' || e.to.type === 'roundabout' || toDegree >= 3);
+
+                let startMargin = fromIsIntersection ? ((e.from.type === 'roundabout') ? (getRoundaboutSpecs(e.from).radius + 8) : 18) : 0;
+                let endMargin = toIsIntersection ? ((e.to.type === 'roundabout') ? (getRoundaboutSpecs(e.to).radius + 8) : 18) : 0;
+
+                if (startMargin + endMargin >= len) {
+                    startMargin = Math.min(startMargin, len * 0.35);
+                    endMargin = Math.min(endMargin, len * 0.35);
+                }
+
+                let p1X = e.from.x + dirX * startMargin;
+                let p1Y = e.from.y + dirY * startMargin;
+                let p2X = e.to.x - dirX * endMargin;
+                let p2Y = e.to.y - dirY * endMargin;
+
+                // Mathematical continuous projection for perfectly aligned dash patterns across segments
+                let globalPosProj = e.from.x * dirX + e.from.y * dirY + startMargin;
+
+                // 3A. White Outer Shoulder / Fog Lines
+                let shoulderDist = (style.width / 2) - 1.8;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(p1X - nx * shoulderDist, p1Y - ny * shoulderDist);
+                ctx.lineTo(p2X - nx * shoulderDist, p2Y - ny * shoulderDist);
+                ctx.moveTo(p1X + nx * shoulderDist, p1Y + ny * shoulderDist);
+                ctx.lineTo(p2X + nx * shoulderDist, p2Y + ny * shoulderDist);
+                ctx.stroke();
+                ctx.restore();
+
+                // 3B. Centerline Markings
+                ctx.save();
+                if (e.type === 'local') {
+                    // Local: Crisp yellow dash with continuous global phase
+                    let dashPattern = [8, 6];
+                    let period = 14;
+                    ctx.strokeStyle = '#f1c40f';
+                    ctx.lineWidth = 1.8;
+                    ctx.setLineDash(dashPattern);
+                    ctx.lineDashOffset = -(globalPosProj % period);
+                    ctx.beginPath();
+                    ctx.moveTo(p1X, p1Y);
+                    ctx.lineTo(p2X, p2Y);
+                    ctx.stroke();
+                } else if (e.type === 'avenue') {
+                    // Avenue: Double solid yellow center divider
+                    ctx.strokeStyle = '#f39c12';
+                    ctx.lineWidth = 1.3;
+                    ctx.setLineDash([]);
+                    let centerGap = 1.6;
+                    ctx.beginPath();
+                    ctx.moveTo(p1X - nx * centerGap, p1Y - ny * centerGap);
+                    ctx.lineTo(p2X - nx * centerGap, p2Y - ny * centerGap);
+                    ctx.moveTo(p1X + nx * centerGap, p1Y + ny * centerGap);
+                    ctx.lineTo(p2X + nx * centerGap, p2Y + ny * centerGap);
+                    ctx.stroke();
+                } else if (e.type === 'highway') {
+                    // Highway: Sleek median divider with solid yellow edges
+                    ctx.strokeStyle = '#2d3436';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(p1X, p1Y);
+                    ctx.lineTo(p2X, p2Y);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = '#e67e22';
+                    ctx.lineWidth = 1.2;
+                    let medGap = 2.4;
+                    ctx.beginPath();
+                    ctx.moveTo(p1X - nx * medGap, p1Y - ny * medGap);
+                    ctx.lineTo(p2X - nx * medGap, p2Y - ny * medGap);
+                    ctx.moveTo(p1X + nx * medGap, p1Y + ny * medGap);
+                    ctx.lineTo(p2X + nx * medGap, p2Y + ny * medGap);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // 3C. Multi-lane dashed white lane dividers
+                if (style.lanesPerDir > 1) {
+                    ctx.save();
+                    let dashPattern = (e.type === 'highway') ? [8, 6] : [5, 5];
+                    let period = (e.type === 'highway') ? 14 : 10;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+                    ctx.lineWidth = 1.1;
+                    ctx.setLineDash(dashPattern);
+                    ctx.lineDashOffset = -(globalPosProj % period);
+
+                    for (let dir = -1; dir <= 1; dir += 2) {
+                        for (let l = 1; l < style.lanesPerDir; l++) {
+                            let offset = dir * (7 * l);
+                            ctx.beginPath();
+                            ctx.moveTo(p1X + nx * offset, p1Y + ny * offset);
+                            ctx.lineTo(p2X + nx * offset, p2Y + ny * offset);
+                            ctx.stroke();
                         }
                     }
-                    ctx.setLineDash([]);
+                    ctx.restore();
                 }
             });
 
@@ -2883,7 +3234,7 @@
                     let rightNy = dirX;
 
                     let totalLanes = ROAD_TYPES[e.type].lanesPerDir;
-                    let stopDist = (n.type === 'roundabout') ? (getRoundaboutSpecs(n).radius + 12) : 18;
+                    let stopDist = (n.type === 'roundabout') ? (getRoundaboutSpecs(n).radius + 8) : 13;
 
                     // 1. Solid White Transverse Stop Line
                     let stopStartX = n.x - dirX * stopDist + rightNx * 1;
@@ -3191,10 +3542,14 @@
                 } else if (n.type === 'signal') {
                     ctx.fillStyle = '#1e272e';
                     ctx.beginPath(); ctx.arc(n.x, n.y, 10, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = (n.signalState === 'NS_GREEN') ? '#2ecc71' : '#e74c3c';
+
+                    let nsColor = (n.signalState === 'NS_GREEN') ? '#2ecc71' : ((n.signalState === 'NS_YELLOW') ? '#f39c12' : '#e74c3c');
+                    let ewColor = (n.signalState === 'EW_GREEN') ? '#2ecc71' : ((n.signalState === 'EW_YELLOW') ? '#f39c12' : '#e74c3c');
+
+                    ctx.fillStyle = nsColor;
                     ctx.fillRect(n.x - 3, n.y - 14, 6, 6);
                     ctx.fillRect(n.x - 3, n.y + 8, 6, 6);
-                    ctx.fillStyle = (n.signalState === 'EW_GREEN') ? '#2ecc71' : '#e74c3c';
+                    ctx.fillStyle = ewColor;
                     ctx.fillRect(n.x - 14, n.y - 3, 6, 6);
                     ctx.fillRect(n.x + 8, n.y - 3, 6, 6);
                 } else if (n.type === 'stopsign') {
