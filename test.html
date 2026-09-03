@@ -1685,15 +1685,33 @@
             if (spawns.length === 0 || jobTargets.length === 0) return;
 
             let timeInfo = getGameTimeInfo();
-            let spawnBatchCount = Math.max(1, Math.round(spawnMultiplier * timeInfo.rushMultiplier));
+            // Extra random bonus spawns on top of the guaranteed-per-hub baseline
+            let extraSpawnCount = Math.max(0, Math.round((spawnMultiplier - 1) * timeInfo.rushMultiplier));
             let spawnedThisTick = new Set();
             let now = Date.now();
 
-            for (let i = 0; i < spawnBatchCount; i++) {
-                // Determine direction based on day/night rush cycles
-                let isToJob = Math.random() < timeInfo.toJobProbability;
-                let startOriginHub = isToJob ? spawns[Math.floor(Math.random() * spawns.length)] : jobTargets[Math.floor(Math.random() * jobTargets.length)];
-                let destinationHub = isToJob ? jobTargets[Math.floor(Math.random() * jobTargets.length)] : spawns[Math.floor(Math.random() * spawns.length)];
+            // --- GUARANTEED BASELINE: every active origin hub gets one spawn attempt per tick ---
+            // During morning rush, towns spawn; during evening rush, workplaces spawn; midday both
+            let isToJobForced = timeInfo.toJobProbability >= 0.5;
+            let primaryOrigins = isToJobForced ? spawns : jobTargets;
+            let primaryDests   = isToJobForced ? jobTargets : spawns;
+            // Also give secondary direction hubs (the minority flow) a proportional attempt
+            let secondaryOrigins = isToJobForced ? jobTargets : spawns;
+            let secondaryDests   = isToJobForced ? spawns : jobTargets;
+
+            // Build the per-hub attempt list: all primary hubs + secondary hubs weighted by minority probability
+            let guaranteedAttempts = [...primaryOrigins];
+            let minorityProb = 1 - Math.max(timeInfo.toJobProbability, 1 - timeInfo.toJobProbability);
+            secondaryOrigins.forEach(h => {
+                if (Math.random() < (minorityProb * 2 + 0.15)) guaranteedAttempts.push(h);
+            });
+
+            for (let attempt of guaranteedAttempts) {
+                // Determine if this hub is a spawn (town) or job to pick correct dest pool
+                let isToJob = attempt.isSpawn;
+                let startOriginHub = attempt;
+                let destPool = isToJob ? (primaryDests.length > 0 ? primaryDests : secondaryDests) : (secondaryDests.length > 0 ? secondaryDests : primaryDests);
+                let destinationHub = destPool[Math.floor(Math.random() * destPool.length)];
 
                 // Minimum 1.6s cooldown per individual building to prevent burst spawning into its own driveway
                 if (startOriginHub.lastSpawnTime && (now - startOriginHub.lastSpawnTime < 1600)) {
@@ -1796,6 +1814,60 @@
                     }
                 }
             }
+
+            // --- EXTRA BONUS SPAWNS: random hubs, driven by spawnMultiplier slider ---
+            for (let i = 0; i < extraSpawnCount; i++) {
+                let isToJob = Math.random() < timeInfo.toJobProbability;
+                let startOriginHub = isToJob ? spawns[Math.floor(Math.random() * spawns.length)] : jobTargets[Math.floor(Math.random() * jobTargets.length)];
+                let destinationHub = isToJob ? jobTargets[Math.floor(Math.random() * jobTargets.length)] : spawns[Math.floor(Math.random() * spawns.length)];
+
+                if (startOriginHub.lastSpawnTime && (now - startOriginHub.lastSpawnTime < 1600)) continue;
+
+                let startNode = nodes.find(n => n.x === startOriginHub.x && n.y === startOriginHub.y);
+                let endNode = nodes.find(n => n.x === destinationHub.x && n.y === destinationHub.y);
+
+                if (startNode && endNode && startNode !== endNode) {
+                    let path = findPath(startNode, endNode);
+                    if (path && path.length > 1) {
+                        let edge = edges.find(e => (e.from === path[0] && e.to === path[1]) || (e.to === path[0] && e.from === path[1]));
+                        let assignedLane = edge ? selectBestLane(path[0], path[1], edge, null, null) : 0;
+                        let spawnKey = `${startOriginHub.id}`;
+                        if (spawnedThisTick.has(spawnKey)) continue;
+
+                        let dx0 = path[1].x - path[0].x;
+                        let dy0 = path[1].y - path[0].y;
+                        let len0 = Math.hypot(dx0, dy0) || 1;
+                        let laneOffset0 = 4 + (assignedLane * 7);
+                        let startX = path[0].x + (-(dy0 / len0) * laneOffset0);
+                        let startY = path[0].y + ((dx0 / len0) * laneOffset0);
+
+                        let isBlocked = cars.some(c => {
+                            let sameSegment = (c.currentNode === path[0] && c.nextNode === path[1]);
+                            return sameSegment && c.lane === assignedLane && Math.hypot(c.x - startX, c.y - startY) < 20 && c.speed < 0.25;
+                        });
+
+                        if (!isBlocked) {
+                            startOriginHub.lastSpawnTime = now;
+                            spawnedThisTick.add(spawnKey);
+                            let initialSpeed = edge ? Math.min(1.4, ROAD_TYPES[edge.type].speedLimit * 0.7) : 1.2;
+                            cars.push({
+                                x: startX, y: startY,
+                                path: path, pathIdx: 0,
+                                currentNode: path[0], nextNode: path[1],
+                                targetHubNode: endNode,
+                                originHubId: startOriginHub.id, originHubName: startOriginHub.name, originHubColor: startOriginHub.color,
+                                targetHubId: destinationHub.id, targetHubName: destinationHub.name, targetHubColor: destinationHub.color,
+                                speed: initialSpeed, lane: assignedLane, color: destinationHub.color,
+                                angle: Math.atan2(dy0, dx0),
+                                stopTimer: 0, stoppedAtStopSign: false, crossingIntersection: false,
+                                inRoundabout: false, roundaboutLane: 0, roundaboutAngle: null,
+                                turnPath: null, turnIdx: 0, laneChangeCooldown: 0
+                            });
+                        }
+                    }
+                }
+            }
+
             updateUI();
         }, 600);
 
@@ -2234,20 +2306,37 @@
                     // ── Stop-sign token-based priority ────────────────────────────────
                     if (car.stoppedAtStopSign && !car.crossingIntersection) {
                         let snode = car.nextNode;
-                        // Release stale token if holder car no longer exists or has moved past snode
+                        // Release stale token if holder car no longer exists or has cleared the junction
                         if (snode.crossingCar && snode.crossingCar !== car) {
                             let holder = snode.crossingCar;
+                            let holderDist = Math.hypot(holder.x - snode.x, holder.y - snode.y);
                             let holderGone = !cars.includes(holder) ||
+                                // Holder has fully left the junction area
+                                holderDist > 26 ||
+                                // Holder has moved past snode onto outbound segment and is moving away
+                                (holder.currentNode === snode && holderDist > stopLineDist) ||
+                                // Holder is completely on a different road segment
                                 (holder.currentNode !== snode && holder.nextNode !== snode) ||
-                                Math.hypot(holder.x - snode.x, holder.y - snode.y) > 22;
+                                // Holder is frozen/stalled inside the junction — revoke to prevent deadlock
+                                ((holder.stoppedFrames || 0) > 12 && holderDist < 26);
                             if (holderGone) snode.crossingCar = null;
                         }
 
-                        // Check if any car is actively inside or clearing through the junction throat
+                        // Check if any car is INBOUND and actively committed to crossing the junction.
+                        // Exclude cars that are already outbound (currentNode === snode, moving away).
                         let isCrossingActive = cars.some(other => {
                             if (other === car) return false;
-                            let nearSnode = Math.hypot(other.x - snode.x, other.y - snode.y) < 22;
-                            return nearSnode && (other.crossingIntersection || other.turnPath || other.currentNode === snode);
+                            let otherDist = Math.hypot(other.x - snode.x, other.y - snode.y);
+                            if (otherDist >= 24) return false;
+
+                            // Car executing a turn path through this junction
+                            if (other.turnPath && other.turnPath.length > 0) return true;
+
+                            // Car that is inbound (nextNode===snode) and has been granted crossing rights
+                            if (other.nextNode === snode && other.crossingIntersection) return true;
+
+                            // Do NOT count cars whose currentNode===snode — they are clearing outbound
+                            return false;
                         });
 
                         // Try to claim the token if intersection is not occupied
@@ -2257,8 +2346,12 @@
                                 let other = cars[k];
                                 if (other === car) continue;
                                 if (other.nextNode === snode && other.stoppedAtStopSign && !other.crossingIntersection) {
-                                    if (other.stopTimer > bestCar.stopTimer ||
-                                        (other.stopTimer === bestCar.stopTimer && (other.waitTimer || 0) > (bestCar.waitTimer || 0))) {
+                                    // Primary: longest wait; secondary: highest stopTimer; tertiary: lowest car index (deterministic tie-break)
+                                    let otherWait = other.waitTimer || 0;
+                                    let bestWait  = bestCar.waitTimer || 0;
+                                    if (otherWait > bestWait ||
+                                        (otherWait === bestWait && other.stopTimer > bestCar.stopTimer) ||
+                                        (otherWait === bestWait && other.stopTimer === bestCar.stopTimer && k < cars.indexOf(bestCar))) {
                                         bestCar = other;
                                     }
                                 }
@@ -2275,8 +2368,9 @@
                         if (!car.crossingIntersection) {
                             stopRequired = true;
                             car.speed = 0;
-                            // Deadlock failsafe: if waiting over 30 frames and junction throat is clear
-                            if (car.waitTimer > 30 && !isCrossingActive) {
+                            // Deadlock failsafe: force through after 14 frames regardless of isCrossingActive.
+                            // The frozen token holder will have been revoked above, so this is safe.
+                            if (car.waitTimer > 14) {
                                 snode.crossingCar = car;
                                 car.crossingIntersection = true;
                                 car.stoppedAtStopSign = false;
@@ -2297,8 +2391,10 @@
                     let isGreen = isNorthSouth ? (sigState === 'NS_GREEN') : (sigState === 'EW_GREEN');
                     let isYellow = isNorthSouth ? (sigState === 'NS_YELLOW') : (sigState === 'EW_YELLOW');
 
-                    // If car has crossed stop line, has turnPath, or is already in intersection, COMMIT & CLEAR (do not stop mid-intersection)
-                    let committedToIntersection = car.crossingIntersection || (car.turnPath && car.turnPath.length > 0) || (distToTargetNode < stopLineDist - 1);
+                    // If car has physically crossed the stop line or has a turn path, COMMIT & CLEAR.
+                    // NOTE: crossingIntersection alone is NOT sufficient — it can be set spuriously by
+                    // anti-stall/collision guards. We require the car to have actually passed the stop line.
+                    let committedToIntersection = (car.turnPath && car.turnPath.length > 0) || (distToTargetNode < stopLineDist - 1);
 
                     if (!committedToIntersection) {
                         if (isGreen) {
@@ -2485,10 +2581,18 @@
                             let otherScore = (other.turnPath ? 100 : 0) + (other.crossingIntersection ? 50 : 0) + (other.speed > 0.4 ? 20 : 0) + (cars.length - j);
 
                             if (carScore >= otherScore) {
-                                // Priority vehicle: drive through and ignore lateral interference
-                                car.speed = Math.max(car.speed, 0.85);
-                                brakeForCar = false;
-                                stopRequired = false;
+                                // Priority vehicle: drive through and ignore lateral interference.
+                                // But NEVER override a red/yellow signal — lateral priority doesn't beat traffic law.
+                                let atRedSignal = car.nextNode.type === 'signal' && distToTargetNode < stopLineDist + 2 && (() => {
+                                    let isNS = Math.abs(dy) > Math.abs(dx);
+                                    let sig = car.nextNode.signalState || 'NS_GREEN';
+                                    return isNS ? sig !== 'NS_GREEN' : sig !== 'EW_GREEN';
+                                })();
+                                if (!atRedSignal) {
+                                    car.speed = Math.max(car.speed, 0.85);
+                                    brakeForCar = false;
+                                    stopRequired = false;
+                                }
                                 break;
                             } else {
                                 // Yielding vehicle: pause until priority vehicle clears
@@ -2530,6 +2634,25 @@
                         car.speed = Math.max(0.65, car.speed);
                         stopRequired = false;
                         brakeForCar = false;
+                    } else if (!directBlocker && isJunction && car.stoppedFrames > 45) {
+                        // Deep stall at junction with no car directly in front: force through to break deadlock.
+                        // ONLY applies to stop signs — never override a red/yellow traffic signal.
+                        let nextIsRedSignal = car.nextNode.type === 'signal' && (() => {
+                            let isNS = Math.abs(dy) > Math.abs(dx);
+                            let sig = car.nextNode.signalState || 'NS_GREEN';
+                            let green = isNS ? (sig === 'NS_GREEN') : (sig === 'EW_GREEN');
+                            return !green; // red or yellow = don't force through
+                        })();
+                        if (!nextIsRedSignal) {
+                            car.speed = Math.max(0.65, car.speed);
+                            stopRequired = false;
+                            brakeForCar = false;
+                            if (car.nextNode && car.nextNode.type === 'stopsign') {
+                                car.nextNode.crossingCar = car;
+                                car.stoppedAtStopSign = false;
+                                car.crossingIntersection = true;
+                            }
+                        }
                     } else if (directBlocker) {
                         // If lateral jam (touching at dist < 10), resolve by priority
                         let blockerDist = Math.hypot(directBlocker.x - car.x, directBlocker.y - car.y);
